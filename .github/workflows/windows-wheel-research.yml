@@ -15,7 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.12", "3.14"]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    env:
+      PYTHONUTF8: '1'
     defaults:
       run:
         shell: pwsh
@@ -50,5 +52,13 @@ jobs:
           $env:HOME = $env:USERPROFILE
           $env:TOKS_PY_N = '100'
           $env:TOKS_PY_CASES = '0'
-          & build/wheel-venv/Scripts/python.exe -m pytest -q -p no:cacheprovider python/tests/test_api.py python/tests/test_threads.py python/tests/test_parity.py
+          & build/wheel-venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider python/tests/test_api.py python/tests/test_threads.py python/tests/test_parity.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Preserve built wheel and build metadata
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-wheel-${{ matrix.python }}
+          path: build/wheels/*.whl
+          if-no-files-found: warn
+          retention-days: 14
