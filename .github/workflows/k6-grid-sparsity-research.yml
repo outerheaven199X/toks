@@ -1,0 +1,52 @@
+name: k6-grid-sparsity-research
+on:
+  push:
+    branches: [research/k6-grid-sparsity]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Unit tests and failure-path checks
+        run: python3 -m unittest discover -s tests/perf -p 'test_k6_grid_density.py' -v
+      - name: Fetch SHA-256-pinned real BPE files
+        run: python3 tools/ci/fetch_tokenizers.py
+      - name: Survey merge-pair densities without benchmarking claims
+        run: |
+          mkdir -p build/perf
+          python3 tools/bench/k6_grid_density.py \
+            "$HOME/.cache/toks/tokenizers/gpt2" \
+            "$HOME/.cache/toks/tokenizers/llama3" \
+            "$HOME/.cache/toks/tokenizers/o200k" \
+            "$HOME/.cache/toks/tokenizers/qwen38" \
+            "$HOME/.cache/toks/tokenizers/glm53" \
+            > build/perf/k6-grid-density.jsonl
+          python3 - <<'PY'
+          import json
+          rows = [json.loads(s) for s in open("build/perf/k6-grid-density.jsonl", encoding="utf-8")]
+          assert len(rows) == 5, len(rows)
+          for r in rows:
+              e = r["bytes_theoretical"]
+              assert r["low_id_distinct_pairs"] <= r["distinct_merge_pairs"]
+              assert e["dense_u32_grid"] == 4 * 1024 * 1024
+              print(r["source_name"], "merges", r["merge_records"],
+                    "low pairs", r["low_id_distinct_pairs"],
+                    "density", r["low_id_density"],
+                    "bitmap+prio MiB", round(e["bitmap_plus_u32_prios_and_row_offsets"] / 1048576, 3))
+          PY
+      - name: Evidence (model digests and memory estimates)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: k6-grid-density-evidence
+          path: build/perf/*.jsonl
+          retention-days: 14
+          if-no-files-found: warn
