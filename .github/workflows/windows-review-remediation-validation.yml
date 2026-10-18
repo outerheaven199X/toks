@@ -1,0 +1,107 @@
+name: windows-review-remediation-validation
+on:
+  push:
+    branches: [research/windows-review-remediation]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  archived-wheels:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Pin artifact source and download original five verified wheels
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/39089648806" --jq .head_sha)" = ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9
+          gh run download 39089648806 --repo "$GITHUB_REPOSITORY" --dir build/previous
+      - name: Audit five wheels and mutate a signed candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/audit
+          mapfile -t wheels < <(find build/previous -name 'toks-*.whl' | sort)
+          test "${#wheels[@]}" -eq 5
+          python3 tools/ci/audit_windows_wheel.py --verify-source-root . "${wheels[@]}" | tee build/audit/previous-wheels.jsonl
+          TOKS_SOURCE_REPO="$GITHUB_WORKSPACE" TOKS_WHEEL_SAMPLE="$(find build/previous -name '*cp312*win_amd64.whl' | head -1)" python3 -m unittest discover -s tests/ci -p test_audit_windows_wheel.py -v
+          python3 - <<'PY'
+          import json
+          xs = [json.loads(s) for s in open("build/audit/previous-wheels.jsonl", encoding="utf-8")]
+          assert sorted(x["python"] for x in xs) == [f"3.{i}" for i in range(10, 15)]
+          assert len({x["sha256"] for x in xs}) == 5
+          PY
+      - if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: original-windows-wheel-audit
+          path: build/audit/*.jsonl
+          if-no-files-found: error
+          retention-days: 14
+  fresh-wheel:
+    runs-on: windows-2025
+    timeout-minutes: 24
+    env:
+      PYTHONUTF8: '1'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - name: LLVM and fresh CPython 3.12 wheel
+        run: |
+          ./tools/ci/win_llvm.ps1
+          uv python install 3.12
+          uv build --wheel python --python 3.12 --out-dir build/wheels
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Audit PE, RECORD and malicious wheel mutations
+        run: |
+          New-Item -ItemType Directory -Force build/audit | Out-Null
+          $wheel = @(Get-ChildItem build/wheels/toks-*.whl)
+          if ($wheel.Count -ne 1) { throw "expected one Windows wheel" }
+          & python tools/ci/audit_windows_wheel.py --verify-source-root . $wheel[0].FullName | Tee-Object -FilePath build/audit/fresh.jsonl
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:TOKS_WHEEL_SAMPLE = $wheel[0].FullName
+          $env:TOKS_SOURCE_REPO = $env:GITHUB_WORKSPACE
+          python -m unittest discover -s tests/ci -p test_audit_windows_wheel.py -v
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Fresh install and existing HF parity regression
+        run: |
+          $env:HOME = $env:USERPROFILE
+          python tools/ci/fetch_tokenizers.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $wheel = @(Get-ChildItem build/wheels/toks-*.whl)
+          uv venv --python 3.12 build/venv
+          uv pip install --python build/venv/Scripts/python.exe $wheel[0].FullName pytest tokenizers==0.23.2
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Explicitly limited author-side smoke parity: 100 generated cases;
+          # case-set collection deliberately disabled (six forced skips).
+          $env:TOKS_PY_N = '100'
+          $env:TOKS_PY_CASES = '0'
+          "Source: $env:GITHUB_SHA; TOKS_PY_N=100; TOKS_PY_CASES=0; six case-set tests forced to skip" |
+            Out-File -Encoding utf8 build/audit/COVERAGE-PROFILE.txt
+          & build/venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider python/tests/test_api.py python/tests/test_threads.py python/tests/test_parity.py |
+            Tee-Object -FilePath build/audit/pytest-output.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Publish audited wheel only after all checks pass
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: audited-windows-cp312-wheel
+          path: |
+            build/wheels/toks-*.whl
+            build/audit/fresh.jsonl
+            build/audit/COVERAGE-PROFILE.txt
+            build/audit/pytest-output.txt
+          if-no-files-found: error
+          retention-days: 14
+
