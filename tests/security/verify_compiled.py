@@ -16,6 +16,7 @@ import toks
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from tools.security.control_id_audit import audit
+from tools.security.control_id_probe_contract import assert_probe_contract
 
 TARGETS = {
     "gpt2": "<|endoftext|>",
@@ -52,23 +53,8 @@ def main() -> None:
         if not flags & toks.ID_SPECIAL:
             raise AssertionError(f"{name}: compiled ID {entry['id']} has no special flag")
         samples = probes(marker)
-        witnesses = []
-        positive = []
-        for sample in samples:
-            ids = tok.encode(sample, added_tokens="none", add_special_tokens=False)
-            if entry["id"] in ids:
-                witnesses.append(sample)
-            if entry["id"] in tok.encode(sample, added_tokens="all", add_special_tokens=False):
-                positive.append(sample)
-        # A finite regression contract, NOT a universal unreachability proof:
-        # any newly observed witness fails CI, even for the two overlapping
-        # model vocabularies (GPT-2 and Gemma 4).
-        if witnesses:
-            raise AssertionError(f"{name}: {len(witnesses)} unexpected ordinary-mode witnesses")
-        # Ensure the very same harness detects the special ID when the
-        # tokenizer is explicitly allowed to recognize its literal marker.
-        if not positive:
-            raise AssertionError(f"{name}: positive control detected no special token IDs")
+        contract = assert_probe_contract(tok, samples, entry["id"],
+                                         expected_positive_count=65, model=name)
         outputs.append({
             "name": name, "source_sha256": report["source_sha256"],
             "compiled_version": toks.__version__,
@@ -76,14 +62,16 @@ def main() -> None:
             "static_status": report["status"], "compiled_id_matches": True,
             "probes": len(samples),
             "marker_bearing_inputs": sum(marker in s for s in samples),
-            "ordinary_mode_witnesses": witnesses[:10],
-            "ordinary_mode_witness_count": len(witnesses),
-            "positive_control_all_mode_witness_count": len(positive),
+            "none_mode_witness_count": contract["none_mode_witness_count"],
+            "positive_control_all_mode_witness_count": contract["positive_control_witness_count"],
+            "expected_positive_control_count": contract["expected_positive_control_count"],
             "limitation": "Finite string probes, some containing literal markers; zero ordinary-mode witnesses is not universal control isolation",
         })
         print(name, report["status"], "compiled ID verified", len(samples),
-              "mixed marker/control probes,", len(witnesses), "ordinary-mode witnesses,",
-              len(positive), "positive controls", flush=True)
+              "mixed marker/control probes,",
+              contract["none_mode_witness_count"], "added_tokens=none witnesses,",
+              contract["positive_control_witness_count"], "positive controls (exactly 65 required)",
+              flush=True)
         del tok
         gc.collect()
     out = Path("build/security/compiled-audit.json")
