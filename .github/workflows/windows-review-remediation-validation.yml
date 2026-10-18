@@ -1,7 +1,7 @@
 name: windows-review-remediation-validation
 on:
   push:
-    branches: [research/windows-review-remediation]
+    branches: [research/windows-review-remediation, research/windows-zip-structural-review]
   workflow_dispatch:
 permissions:
   contents: read
