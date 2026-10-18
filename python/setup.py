@@ -3,7 +3,7 @@
     uv build --wheel python --out-dir build/wheels          # from the repository root
 
 The library is built by the repository's own Makefile (the same objects `make` builds: c core + this ISA's
-asm kernels, its flags, its tier dispatch) into build/python/<platform>/libtoks.a and linked into the
+asm kernels, its flags, its tier dispatch) into a platform-native static archive and linked into the
 extension statically, so the wheel is self-contained. Only PyInit__toks is exported: the toks_* symbols
 stay inside the module (Linux --exclude-libs, macOS -exported_symbol), whatever else the process loads.
 """
@@ -49,24 +49,41 @@ class BuildExt(build_ext):
     def build_extension(self, ext):
         if not os.path.isfile(os.path.join(ROOT, "include", "toks.h")):
             raise RuntimeError(f"toks: build the wheel from the toks repository (no include/toks.h under {ROOT})")
-        plat = sysconfig.get_platform().replace("-", "_").replace(".", "_")
-        bdir = f"build/python/{plat}"
         env = dict(os.environ)
-        env.setdefault("CC", "clang")
-        if sys.platform == "darwin":
-            env.setdefault("MACOSX_DEPLOYMENT_TARGET", sysconfig.get_config_var("MACOSX_DEPLOYMENT_TARGET") or "11.0")
-        jobs = str(min(8, os.cpu_count() or 1))
-        subprocess.run(["make", "-C", ROOT, "-j", jobs, f"BUILD_DIR={bdir}", f"{bdir}/libtoks.a"], check=True, env=env)
-        lib = os.path.join(ROOT, bdir, "libtoks.a")
+        if sys.platform == "win32":
+            if _isa() != "x86_64":
+                raise RuntimeError("toks: Windows wheels currently require x86-64")
+            # Share the native build's LLVM 21 flags and AVX2/scalar tier dispatch.
+            # The 'lib' mode avoids compiling unrelated C test binaries for every CPython wheel.
+            subprocess.run(["cmd.exe", "/d", "/c", r"tools\win\build.cmd", "lib"],
+                           cwd=ROOT, check=True, env=env)
+            lib = os.path.join(ROOT, "build", "windows-x86_64", "libtoks.lib")
+        else:
+            plat = sysconfig.get_platform().replace("-", "_").replace(".", "_")
+            bdir = f"build/python/{plat}"
+            env.setdefault("CC", "clang")
+            if sys.platform == "darwin":
+                env.setdefault("MACOSX_DEPLOYMENT_TARGET",
+                               sysconfig.get_config_var("MACOSX_DEPLOYMENT_TARGET") or "11.0")
+            jobs = str(min(8, os.cpu_count() or 1))
+            subprocess.run(["make", "-C", ROOT, "-j", jobs, f"BUILD_DIR={bdir}",
+                            f"{bdir}/libtoks.a"], check=True, env=env)
+            lib = os.path.join(ROOT, bdir, "libtoks.a")
+        if not os.path.isfile(lib):
+            raise RuntimeError(f"toks: the native build produced no static library at {lib}")
         ext.extra_objects = [lib]
         ext.depends = [lib]                 # setuptools relinks only when a source or a dependency is newer
         super().build_extension(ext)
 
 
-os.environ.setdefault("CC", "clang")     # the library's compiler (LLVM) for the module too
+if sys.platform != "win32":
+    os.environ.setdefault("CC", "clang")     # LLVM for the Unix extension build
 
-cflags = ["-std=c11", "-O3", "-g0", "-fvisibility=hidden", "-Wall", "-Wextra", "-Werror",
-          "-Wno-missing-field-initializers"]
+# MSVC compiles the CPython module; the native static library is built by LLVM/clang
+# with the same flags as tools/win/build.cmd. Do not pass GCC-only flags to cl.exe.
+cflags = (["/O2", "/W3"] if sys.platform == "win32" else
+          ["-std=c11", "-O3", "-g0", "-fvisibility=hidden", "-Wall", "-Wextra", "-Werror",
+           "-Wno-missing-field-initializers"])
 ldflags = []
 if sys.platform == "darwin":
     ldflags += ["-Wl,-exported_symbol,_PyInit__toks", "-Wl,-dead_strip"]
