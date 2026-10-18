@@ -30,7 +30,7 @@ jobs:
           baseline=2ebc390a125841479fc33dc01d8c3505075a0514
           original=ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9
           previous=b48e237530184f142e8aae8ea80435d57a28a28a
-          fixed=17d62d4acb50223e866a6d27c5ef1bd5e54ab649
+          fixed=89fe283a6612d255f03e654b6f11983408a6a5cc
           test "$(git rev-parse refs/remotes/origin/master)" = "$baseline"
           test "$(git rev-parse refs/remotes/origin/research/windows-wheels-reviewed)" = "$original"
           test "$(git rev-parse refs/remotes/origin/research/windows-release-audit)" = "$previous"
@@ -63,7 +63,7 @@ jobs:
           gh run download 39121621495 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/remediation
           gh run download 39089648806 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/original_five_wheels
           {
-            echo 'The validated revision is 17d62d4acb50223e866a6d27c5ef1bd5e54ab649.'
+            echo 'The validated revision is 89fe283a6612d255f03e654b6f11983408a6a5cc.'
             echo 'Source and tests are author work on unmerged fork branches. No upstream PR/release exists.'
             echo 'The independent reviewer found five accepted injection/malformed metadata cases in the prior auditor.'
             echo 'The new test suite exercises those cases and source Git blob pinning.'
