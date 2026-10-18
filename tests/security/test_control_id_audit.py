@@ -58,6 +58,20 @@ class ControlIdAuditTests(unittest.TestCase):
         d["added_tokens"][0]["id"] = 3
         self.assertEqual(check(d)["status"], "disjoint")
 
+    def test_legacy_type_inference_requires_unambiguous_shape(self):
+        bpe = document({"vocab": {"a": 0}, "merges": []})
+        self.assertEqual(check(bpe)["algorithm"], "BPE")
+        wp = document({"vocab": {"[UNK]": 0}, "unk_token": "[UNK]",
+                       "continuing_subword_prefix": "##",
+                       "max_input_chars_per_word": 100})
+        self.assertEqual(check(wp)["algorithm"], "WordPiece")
+        uni = document({"vocab": [["a", -1.0]], "unk_id": 0})
+        self.assertEqual(check(uni)["algorithm"], "Unigram")
+        with self.assertRaisesRegex(AuditError, "unambiguous"):
+            check(document({"vocab": {"a": 0}}))
+        with self.assertRaisesRegex(AuditError, "unambiguous"):
+            check(document({"vocab": {"a": 0}, "merges": None}))
+
     def test_reserved_name_must_be_explicit_and_special(self):
         d = document({"type": "BPE", "vocab": {"a": 0}})
         with self.assertRaisesRegex(AuditError, "supply at least"):
