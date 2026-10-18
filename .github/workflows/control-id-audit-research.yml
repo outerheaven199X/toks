@@ -22,11 +22,21 @@ jobs:
       - name: Real-world control ID classifications (not security certifications)
         run: |
           mkdir -p build/security
+          python3 - <<'PY'
+          import json, os
+          root = os.path.expanduser("~/.cache/toks/tokenizers")
+          for name in ("gpt2", "llama3", "qwen38", "o200k", "gemma4"):
+              with open(os.path.join(root, name), encoding="utf-8") as f:
+                  d = json.load(f)
+              marked = [(a["content"], a["id"]) for a in d.get("added_tokens", [])
+                        if a.get("special") is True]
+              print("MARKERS", name, "count", len(marked), "first", marked[:28], flush=True)
+          PY
           python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/gpt2" --control '<|endoftext|>' > build/security/gpt2.json
           python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/llama3" --control '<|eot_id|>' > build/security/llama3.json
           python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/qwen38" --control '<|im_start|>' > build/security/qwen38.json
           python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/o200k" --control '<|im_start|>' > build/security/o200k.json
-          python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/gemma4" --control '<start_of_turn>' > build/security/gemma4.json
+          python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/gemma4" --control '<|turn>' > build/security/gemma4.json
           python3 - <<'PY'
           import glob, json
           paths = sorted(glob.glob("build/security/*.json"))
