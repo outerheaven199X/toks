@@ -216,6 +216,26 @@ class WheelAuditTests(unittest.TestCase):
         self.assertEqual(report['native_normalized_sha256'],
                          audit(self.source)['native_normalized_sha256'])
 
+    def test_metadata_body_mutation_rejected_without_new_headers(self):
+        name = next(n for n in self.original if n.endswith('/METADATA'))
+        original = self.original[name]
+        with self.assertRaisesRegex(AuditError, 'unreviewed dist-info bytes: METADATA'):
+            audit(self.mutated({name: original + b"\nHarmless-looking new package description\n"}))
+
+    def test_generator_change_and_top_level_mutation_rejected(self):
+        name = next(n for n in self.original if n.endswith('/WHEEL'))
+        original = self.original[name]
+        import re
+        self.assertIn(b'setuptools (', original)
+        changed = re.sub(rb'Generator: setuptools \(\d+\.\d+\.\d+\)',
+                         b'Generator: setuptools (999.1.0)', original)
+        self.assertNotEqual(changed, original)
+        with self.assertRaisesRegex(AuditError, 'unreviewed dist-info bytes: WHEEL'):
+            audit(self.mutated({name: changed}))
+        name = next(n for n in self.original if n.endswith('/top_level.txt'))
+        with self.assertRaisesRegex(AuditError, 'unreviewed dist-info bytes: top_level.txt'):
+            audit(self.mutated({name: b'toks\nother\n'}))
+
     def test_inconsistent_linker_timestamps_rejected(self):
         import struct
         name = next(n for n in self.original if n.endswith('.pyd'))

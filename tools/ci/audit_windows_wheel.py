@@ -48,6 +48,14 @@ def source_pins() -> dict:
          "malformed native extension fingerprints")
     need(obj.get("native_reference_run_id") == 39089648806,
          "unknown reference build for native extension fingerprints")
+    dist = obj.get("dist_info_sha256")
+    need(isinstance(dist, dict) and set(dist) == {"METADATA", "WHEEL", "top_level.txt"},
+         "missing pinned dist-info hashes")
+    need(all(isinstance(dist.get(n), str) and re.fullmatch(r"[a-f0-9]{64}", dist[n])
+             for n in ("METADATA", "top_level.txt")), "malformed dist-info hashes")
+    need(isinstance(dist["WHEEL"], dict) and set(dist["WHEEL"]) == set(native)
+         and all(isinstance(v, str) and re.fullmatch(r"[a-f0-9]{64}", v)
+                 for v in dist["WHEEL"].values()), "malformed WHEEL hashes")
     files = obj.get("files")
     need(isinstance(files, dict), "source pin manifest has no file list")
     expected = {"toks/__init__.py", "toks/_vocab.py", "toks/_toks.pyi", "toks/py.typed",
@@ -326,6 +334,12 @@ def audit(path: Path, *, source_root: Path | None = None) -> dict:
                        "Operating System :: MacOS", "Operating System :: POSIX :: Linux",
                        "Operating System :: Microsoft :: Windows"]
         need(meta_hdr.get_all("Classifier") == classifiers, "unexpected METADATA classifiers")
+        for name, expected in (("METADATA", pins["dist_info_sha256"]["METADATA"]),
+                               ("WHEEL", pins["dist_info_sha256"]["WHEEL"][pyver]),
+                               ("top_level.txt", pins["dist_info_sha256"]["top_level.txt"])):
+            need(base + name in files, f"missing pinned metadata member: {name}")
+            need(hashlib.sha256(z.read(base + name)).hexdigest() == expected,
+                 f"unreviewed dist-info bytes: {name}")
         listed = {}
         with z.open(records) as f:
             lines = io.TextIOWrapper(f, encoding="utf-8", newline="")
