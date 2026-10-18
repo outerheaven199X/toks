@@ -1,6 +1,6 @@
 # Research: model-vocabulary control ID audit
 
-**This does not satisfy the structural isolation release requirement (SPEC §3.6).**
+**This does not satisfy the structural isolation release requirement (SPEC §3.6).** The unpublished SPEC.md file itself is not available to outside contributors; the public release checklist states the requirement remains unmet. Do not imply we verified the entire private specification.
 It is a conservative, inspectable prerequisite for deciding whether a specific
 control ID could be produced by the raw tokenizer model. It does not change
 toks's compiler, C ABI, or output, and does not protect an application's prompts.
@@ -50,7 +50,7 @@ Every JSON record includes the SHA-256 of the tokenizer bytes and the encoding
 mode being assessed. The dedicated research GitHub Actions run audits five
 pinned real tokenizer configurations and retains JSON evidence.
 It also builds a C-backed wheel, verifies IDs and special flags, then runs
-70 finite plain-text probes per model. Zero witnesses is not a proof.
+70 finite string probes per model, **most containing the literal control marker**. In the selected mode with added-token recognition disabled, zero observed witnesses is a bounded empirical result, not a proof. The verifier now fails CI on **any** ordinary-mode witness for all five models, including GPT-2 and Gemma 4 whose vocabulary overlaps. An added_tokens="all" positive control must also produce at least one witness, demonstrating that the detection path works.
 
 ## Required before calling the release requirement met
 

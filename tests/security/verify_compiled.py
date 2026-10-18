@@ -53,24 +53,37 @@ def main() -> None:
             raise AssertionError(f"{name}: compiled ID {entry['id']} has no special flag")
         samples = probes(marker)
         witnesses = []
+        positive = []
         for sample in samples:
             ids = tok.encode(sample, added_tokens="none", add_special_tokens=False)
             if entry["id"] in ids:
                 witnesses.append(sample)
-        # A witnessed ID in a disjoint case invalidates the declared assumptions.
-        if report["status"] == "disjoint" and witnesses:
-            raise AssertionError(f"{name}: {len(witnesses)} witnesses contradict disjointness")
+            if entry["id"] in tok.encode(sample, added_tokens="all", add_special_tokens=False):
+                positive.append(sample)
+        # A finite regression contract, NOT a universal unreachability proof:
+        # any newly observed witness fails CI, even for the two overlapping
+        # model vocabularies (GPT-2 and Gemma 4).
+        if witnesses:
+            raise AssertionError(f"{name}: {len(witnesses)} unexpected ordinary-mode witnesses")
+        # Ensure the very same harness detects the special ID when the
+        # tokenizer is explicitly allowed to recognize its literal marker.
+        if not positive:
+            raise AssertionError(f"{name}: positive control detected no special token IDs")
         outputs.append({
             "name": name, "source_sha256": report["source_sha256"],
             "compiled_version": toks.__version__,
             "control": marker, "id": entry["id"],
             "static_status": report["status"], "compiled_id_matches": True,
-            "probes": len(samples), "witnesses": witnesses[:10],
-            "witness_count": len(witnesses),
-            "limitation": "Finite probes only; zero witnesses is not a security proof",
+            "probes": len(samples),
+            "marker_bearing_inputs": sum(marker in s for s in samples),
+            "ordinary_mode_witnesses": witnesses[:10],
+            "ordinary_mode_witness_count": len(witnesses),
+            "positive_control_all_mode_witness_count": len(positive),
+            "limitation": "Finite string probes, some containing literal markers; zero ordinary-mode witnesses is not universal control isolation",
         })
         print(name, report["status"], "compiled ID verified", len(samples),
-              "plain-text probes", len(witnesses), "witnesses", flush=True)
+              "mixed marker/control probes,", len(witnesses), "ordinary-mode witnesses,",
+              len(positive), "positive controls", flush=True)
         del tok
         gc.collect()
     out = Path("build/security/compiled-audit.json")

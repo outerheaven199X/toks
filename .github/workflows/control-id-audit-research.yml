@@ -1,7 +1,7 @@
 name: control-id-audit-research
 on:
   push:
-    branches: [research/control-id-audit]
+    branches: [research/control-id-audit, research/control-id-probe-correction]
   workflow_dispatch:
 
 permissions:
@@ -49,16 +49,18 @@ jobs:
               print(path, data["algorithm"], data["controls"], data["status"])
           PY
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.13.1"
       - name: LLVM 21 for the actual C-backed wheel
         run: |
           tools/ci/llvm.sh
           echo "$HOME/.cache/toks-llvm/21.1.8/bin" >> "$GITHUB_PATH"
       - name: Build wheel and cross-check effective IDs against compiled C
         run: |
-          uv python install 3.12
-          uv build --wheel python --python 3.12 --out-dir build/security-wheel
+          uv python install 3.12.15
+          uv build --wheel python --python 3.12.15 --out-dir build/security-wheel
           wheel=$(ls build/security-wheel/toks-*.whl)
-          uv run --no-project --isolated --python 3.12 --with "$wheel" python tests/security/verify_compiled.py
+          uv run --no-project --isolated --python 3.12.15 --with "$wheel" python tests/security/verify_compiled.py
       - name: Audit evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
