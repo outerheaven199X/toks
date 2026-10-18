@@ -50,7 +50,19 @@ Every JSON record includes the SHA-256 of the tokenizer bytes and the encoding
 mode being assessed. The dedicated research GitHub Actions run audits five
 pinned real tokenizer configurations and retains JSON evidence.
 It also builds a C-backed wheel, verifies IDs and special flags, then runs
-70 finite string probes per model, **most containing the literal control marker**. In the selected mode with added-token recognition disabled, zero observed witnesses is a bounded empirical result, not a proof. The verifier now fails CI on **any** ordinary-mode witness for all five models, including GPT-2 and Gemma 4 whose vocabulary overlaps. An added_tokens="all" positive control must also produce at least one witness, demonstrating that the detection path works.
+70 finite strings per model, **most containing the literal control marker**.
+The disabled-recognition encoding mode is `added_tokens="none"`, not a
+claim that inputs are ordinary text. The observed zero witnesses is finite
+regression evidence, not a universal reachability proof.
+
+The compiled verifier calls the SAME `assert_probe_contract` routine as a
+separate set of fake-tokenizer mutation tests. These deliberately inject an
+unexpected selected ID into `added_tokens="none"` and must exercise and
+fail the actual witness assertion. Recognition-enabled mode must generate
+**exactly 65 positive detections out of 70** for EACH pinned model, not merely
+one or more. Any newly observed GPT-2/Gemma 4 witness must fail and be
+investigated: both vocabularies overlap the selected control ID, so a witness
+does not automatically prove an application-level exploit.
 
 ## Required before calling the release requirement met
 
