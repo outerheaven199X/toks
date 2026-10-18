@@ -13,9 +13,11 @@ import hashlib
 import io
 import json
 import re
+import stat
 import struct
 import sys
 from pathlib import Path, PurePosixPath
+from email.parser import Parser
 from zipfile import BadZipFile, ZipFile
 
 
@@ -94,6 +96,19 @@ def pe_imports(b: bytes) -> list[str]:
         found.append(cstring(desc[3]))
     else:
         raise AuditError("unterminated PE import descriptor array")
+    # Delay-load imports bypass the normal dependency list: refuse them.
+    if dirs > 13 and opt_len >= 112 + 14 * 8:
+        need(u32(b, opt + 112 + 8 * 13) == 0 and u32(b, opt + 116 + 8 * 13) == 0,
+             "PE has a delay-import directory that this auditor cannot inspect")
+    export_rva, export_size = u32(b, opt + 112), u32(b, opt + 116)
+    need(export_rva and export_size >= 40, "missing PE export directory")
+    export_off = rva_offset(export_rva)
+    need(export_off + 40 <= len(b), "truncated PE export directory")
+    funcs, names = u32(b, export_off + 20), u32(b, export_off + 24)
+    need(funcs == 1 and names == 1, "extension must export exactly one function")
+    export_name_table = rva_offset(u32(b, export_off + 32))
+    export_name = cstring(u32(b, export_name_table))
+    need(export_name == "PyInit__toks", f"wrong or leaked PE export: {export_name}")
     need(len(found) > 0, "PE import table has no DLLs")
     need(len({s.lower() for s in found}) == len(found), "duplicate PE DLL imports")
     return found
@@ -107,13 +122,25 @@ def audit(path: Path) -> dict:
     base = f"toks-{version}.dist-info/"
     tag = f"cp{pyver}-cp{pyver}-win_amd64"
     with ZipFile(path) as z:
+        infos = z.infolist()
+        need(0 < len(infos) <= 64 and sum(i.file_size for i in infos) <= 32 * 1024 * 1024,
+             "wheel exceeds bounded audit budget")
+        need(all(i.file_size <= 16 * 1024 * 1024 for i in infos), "oversized wheel member")
+        need(all(stat.S_IFMT(i.external_attr >> 16) != stat.S_IFLNK for i in infos),
+             "wheel contains symlink")
         files = z.namelist()
+        need(len({n.lower() for n in files}) == len(files), "case-colliding archive entries")
         need(len(files) > 5 and len(files) == len(set(files)), "missing files or duplicate archive path")
         for name in files:
             p = PurePosixPath(name)
             need(name and not name.endswith("/") and not name.startswith("/") and "\\" not in name
                  and ".." not in p.parts and p.parts[0] not in (".", ""), f"unsafe archive member: {name}")
-            need(name.startswith("toks/") or name.startswith(base), f"unexpected wheel member: {name}")
+            permitted_package = {"toks/__init__.py", "toks/_vocab.py", "toks/_toks.pyi", "toks/py.typed",
+                                 f"toks/_toks.cp{pyver}-win_amd64.pyd"}
+            permitted_dist = {base + x for x in ("METADATA", "WHEEL", "RECORD", "top_level.txt")}
+            permitted_dist.update(base + "licenses/" + x for x in
+                                  ("LICENSE", "NOTICE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"))
+            need(name in permitted_package or name in permitted_dist, f"unexpected wheel member: {name}")
             need(not name.lower().endswith((".pth", ".dll", ".exe", ".so", ".dylib")),
                  f"unexpected extra native executable: {name}")
         records = base + "RECORD"
@@ -130,9 +157,10 @@ def audit(path: Path) -> dict:
              "wrong wheel platform tag or purelib flag")
         with z.open(base + "METADATA") as f:
             metadata = f.read().decode("utf-8")
-        need(f"Version: {version}" in metadata and "Name: toks" in metadata,
-             "wheel version/project metadata conflict")
-        need("License-Expression: Apache-2.0" in metadata, "expected Apache-2.0 metadata")
+        headers = Parser().parsestr(metadata, headersonly=True)
+        for key, value in (("Version", version), ("Name", "toks"),
+                           ("License-Expression", "Apache-2.0")):
+            need(headers.get_all(key) == [value], f"invalid {key} metadata")
         listed = {}
         with z.open(records) as f:
             lines = io.TextIOWrapper(f, encoding="utf-8", newline="")
