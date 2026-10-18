@@ -35,7 +35,7 @@ jobs:
           python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/gpt2" --control '<|endoftext|>' > build/security/gpt2.json
           python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/llama3" --control '<|eot_id|>' > build/security/llama3.json
           python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/qwen38" --control '<|im_start|>' > build/security/qwen38.json
-          python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/o200k" --control '<|im_start|>' > build/security/o200k.json
+          python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/o200k" --control '<|start|>' > build/security/o200k.json
           python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/gemma4" --control '<|turn>' > build/security/gemma4.json
           python3 - <<'PY'
           import glob, json
