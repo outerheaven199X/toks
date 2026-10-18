@@ -1,6 +1,7 @@
 @echo off
 rem tools/win/build.cmd: the Makefile's lib + test rules on windows x86-64 (no make there), from the source root.
 rem   tools\win\build.cmd          -> build\windows-x86_64\{libtoks.lib, toks.dll + toks.lib, tests\*.exe}
+rem   tools\win\build.cmd lib      -> build\windows-x86_64\libtoks.lib only (Python wheel build)
 rem Compiler: %TOKS_LLVM_BIN%\clang.exe, default %USERPROFILE%\.cache\toks-llvm\21.1.8\bin (docs/machines.md, aimax395).
 rem Same flags as the Makefile (OS=windows): CSTRICT for the library, CTEST for the tests, and its kernel rule:
 rem every src\asm\x86_64\k*.S defines TOKS_HAVE_<NAME>=1 (the name upper-cased) for the library and the tests,
@@ -8,6 +9,8 @@ rem so the dispatch runs what is assembled, and the tests get TOKS_ASM_SOURCES (
 rem Also builds test_e2e against toks.dll, and per K3 asm tier present in src\asm\x86_64: test_k3 and
 rem tests/k3/check.c with -DK3_SCAN=<tier>, both directly and through the abi canary harness (tests/k3/abi_k3.c).
 setlocal enabledelayedexpansion
+set LIB_ONLY=0
+if /i "%~1"=="lib" set LIB_ONLY=1
 if "%TOKS_LLVM_BIN%"=="" set TOKS_LLVM_BIN=%USERPROFILE%\.cache\toks-llvm\21.1.8\bin
 set CC="%TOKS_LLVM_BIN%\clang.exe"
 set B=build\windows-x86_64
@@ -33,8 +36,10 @@ set SHOBJS=
 for %%f in (src\core\*.c src\platform\*.c src\gen\*.c src\par\*.c) do (
   %CC% %CSTRICT% -fvisibility=hidden %CPP% %HAVE% -c %%f -o %B%\obj\%%~nf.o
   if errorlevel 1 (echo FAIL compile %%f & set FAIL=1)
-  %CC% %CSTRICT% -DTOKS_BUILD_SHARED %CPP% %HAVE% -c %%f -o %B%\shobj\%%~nf.o
-  if errorlevel 1 (echo FAIL compile shared %%f & set FAIL=1)
+  if "!LIB_ONLY!"=="0" (
+    %CC% %CSTRICT% -DTOKS_BUILD_SHARED %CPP% %HAVE% -c %%f -o %B%\shobj\%%~nf.o
+    if errorlevel 1 (echo FAIL compile shared %%f & set FAIL=1)
+  )
   set OBJS=!OBJS! %B%\obj\%%~nf.o
   set SHOBJS=!SHOBJS! %B%\shobj\%%~nf.o
 )
@@ -47,6 +52,7 @@ for %%f in (src\asm\x86_64\*.S) do (
 if exist %B%\libtoks.lib del %B%\libtoks.lib
 "%TOKS_LLVM_BIN%\llvm-lib.exe" /nologo /out:%B%\libtoks.lib %OBJS%
 if errorlevel 1 (echo FAIL libtoks.lib & set FAIL=1)
+if "%LIB_ONLY%"=="1" goto done
 %CC% -shared -o %B%\toks.dll %SHOBJS%
 if errorlevel 1 (echo FAIL toks.dll & set FAIL=1)
 for %%t in (tests\c\*.c) do (
@@ -71,5 +77,6 @@ for %%k in (c avx2 avx512) do (
     if errorlevel 1 (echo FAIL build k3check_%%k_abi & set FAIL=1)
   )
 )
+:done
 echo build.cmd: FAIL=%FAIL%
 exit /b %FAIL%
