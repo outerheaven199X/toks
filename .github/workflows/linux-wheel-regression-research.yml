@@ -1,0 +1,37 @@
+name: linux-wheel-regression-research
+on:
+  push:
+    branches: [research/windows-wheels-reviewed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-wheel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Pin C compiler
+        run: |
+          tools/ci/llvm.sh
+          echo "$HOME/.cache/toks-llvm/21.1.8/bin" >> "$GITHUB_PATH"
+      - name: Retrieve pinned tokenizers
+        run: python3 tools/ci/fetch_tokenizers.py
+      - name: Ensure unchanged Unix Makefile build path still works
+        run: |
+          uv python install 3.12
+          uv build --wheel python --python 3.12 --out-dir build/wheels
+          whl=$(ls build/wheels/toks-*-cp312-*.whl)
+          uv venv --python 3.12 build/wheel-venv
+          uv pip install --python build/wheel-venv/bin/python "$whl" pytest tokenizers==0.23.2
+          build/wheel-venv/bin/python -c 'import toks; print(toks.__version__)'
+      - name: Check Linux wheel API and HF parity with pinned inputs
+        run: |
+          TOKS_PY_N=100 TOKS_PY_CASES=0 build/wheel-venv/bin/python -m pytest \
+            -q -rs -p no:cacheprovider \
+            python/tests/test_api.py python/tests/test_threads.py python/tests/test_parity.py
