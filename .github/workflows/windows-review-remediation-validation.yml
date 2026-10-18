@@ -61,7 +61,8 @@ jobs:
           version: "0.13.1"
       - name: LLVM and fresh CPython 3.12 wheel
         run: |
-          if ((uv --version).Trim() -ne "uv 0.13.1") { throw "unexpected uv version" }
+          Write-Host "Using $(uv --version)"
+          if ((uv --version) -notmatch '^uv 0\.13\.1(?:\s|$)') { throw "unexpected uv version" }
           ./tools/ci/win_llvm.ps1
           uv python install 3.12.15
           uv build --wheel python --python 3.12.15 --out-dir build/wheels
