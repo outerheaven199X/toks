@@ -55,6 +55,57 @@ class WheelAuditTests(unittest.TestCase):
                 z.writestr(n, data)
         return target
 
+    def _write_deflate_slack_case(self, suffix: bytes):
+        """Construct a CRC-valid ZIP whose top_level.txt stream ends before its local data ends."""
+        import struct
+        import zlib
+        items = zipfile.ZipFile(self.source).infolist()
+        output, directory = bytearray(), bytearray()
+        for info in items:
+            contents = self.original[info.filename]
+            name = info.filename.encode("utf-8")
+            compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
+            compressed = compressor.compress(contents) + compressor.flush()
+            if info.filename.endswith("top_level.txt"):
+                compressed += suffix
+            crc = zlib.crc32(contents)
+            offset = len(output)
+            output += (struct.pack("<IHHHHHIIIHH", 0x04034b50, 20, 0, 8, 0,
+                                   0x21, crc, len(compressed), len(contents),
+                                   len(name), 0) + name + compressed)
+            directory += (struct.pack("<IHHHHHHIIIHHHHHII", 0x02014b50, 20,
+                                      20, 0, 8, 0, 0x21, crc, len(compressed),
+                                      len(contents), len(name), 0, 0, 0, 0,
+                                      info.external_attr, offset) + name)
+        cd_off = len(output)
+        output += directory
+        output += struct.pack("<IHHHHIIH", 0x06054b50, 0, 0, len(items),
+                              len(items), len(directory), cd_off, 0)
+        target = Path(self.tmp.name) / self.name
+        target.write_bytes(output)
+        return target
+
+    def test_reviewer_deflate_slack_pth_rejected_with_valid_crc_and_record(self):
+        import struct
+        import zlib
+        hidden_name = b"zz_slack.pth"
+        hidden_data = b"import sys; sys.stderr.write('SLACK PTH EXECUTED\\n')\n"
+        hidden = (struct.pack("<IHHHHHIIIHH", 0x04034b50, 20, 0, 0, 0,
+                              0x21, zlib.crc32(hidden_data), len(hidden_data),
+                              len(hidden_data), len(hidden_name), 0)
+                  + hidden_name + hidden_data)
+        target = self._write_deflate_slack_case(hidden)
+        with zipfile.ZipFile(target) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertNotIn("zz_slack.pth", archive.namelist())
+        with self.assertRaisesRegex(AuditError, "ZIP deflate stream has trailing compressed bytes"):
+            audit(target)
+
+    def test_even_nonexecutable_deflate_slack_bytes_are_rejected(self):
+        target = self._write_deflate_slack_case(b"unaccounted-trailing-bytes")
+        with self.assertRaisesRegex(AuditError, "ZIP deflate stream has trailing compressed bytes"):
+            audit(target)
+
     def test_reviewer_orphan_local_pth_rejected_even_when_zipfile_cannot_list_it(self):
         import struct
         import zlib
