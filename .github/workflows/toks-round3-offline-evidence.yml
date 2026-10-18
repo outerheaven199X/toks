@@ -1,0 +1,95 @@
+name: toks-round3-offline-evidence
+on:
+  push:
+    branches: [research/round3-evidence-20261018]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Export exact Git trees, diffs, logs, packages and certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p payload/source payload/patches payload/metadata payload/ci payload/artifacts
+          for branch in master research/windows-review-remediation research/windows-zip-structural-review research/k6-compact-lookup-prototype research/k6-pinned-evidence-correction research/control-id-audit research/control-id-probe-correction; do
+            git fetch --no-tags origin "refs/heads/$branch:refs/remotes/origin/$branch"
+          done
+          test "$(git rev-parse refs/remotes/origin/master)" = 2ebc390a125841479fc33dc01d8c3505075a0514
+          test "$(git rev-parse refs/remotes/origin/research/windows-review-remediation)" = 05bc0a11e5ab581cfeeb0a39a8c4d11e81d86b2d
+          test "$(git rev-parse refs/remotes/origin/research/windows-zip-structural-review)" = 221c65f3f2ddf64bec0faaa121e5ef545d344211
+          test "$(git rev-parse refs/remotes/origin/research/k6-compact-lookup-prototype)" = ebd2a99587f7a9c0cb696b0bc03cccb1886eff4b
+          test "$(git rev-parse refs/remotes/origin/research/k6-pinned-evidence-correction)" = 41a860d201908d5275645a9e2de622dfd4902377
+          test "$(git rev-parse refs/remotes/origin/research/control-id-audit)" = 28547365dda9e4ae4a3793d496a47fd2936cf70e
+          test "$(git rev-parse refs/remotes/origin/research/control-id-probe-correction)" = e9634a8806783c8a77eaba891479ea2f836ee9a5
+
+          git bundle create payload/source/research-round3-seven-refs.bundle \
+            refs/remotes/origin/master \
+            refs/remotes/origin/research/windows-review-remediation \
+            refs/remotes/origin/research/windows-zip-structural-review \
+            refs/remotes/origin/research/k6-compact-lookup-prototype \
+            refs/remotes/origin/research/k6-pinned-evidence-correction \
+            refs/remotes/origin/research/control-id-audit \
+            refs/remotes/origin/research/control-id-probe-correction
+          git bundle verify payload/source/research-round3-seven-refs.bundle > payload/metadata/GIT_BUNDLE_VERIFIED.txt 2>&1
+
+          git archive --format=tar.gz --output=payload/source/master-2ebc390a.tar.gz refs/remotes/origin/master
+          for branch in windows-zip-structural-review k6-pinned-evidence-correction control-id-probe-correction; do
+            ref="refs/remotes/origin/research/$branch"
+            git archive --format=tar.gz --output="payload/source/$branch.tar.gz" "$ref"
+            git diff --binary --full-index refs/remotes/origin/master "$ref" > "payload/patches/$branch-from-master.diff"
+            git format-patch --stdout refs/remotes/origin/master.."$ref" > "payload/patches/$branch-all-commits.mbox"
+            git log --reverse --format='%H %cI %s%n%b' refs/remotes/origin/master.."$ref" > "payload/metadata/$branch-commit-history.txt"
+            git diff --check refs/remotes/origin/master "$ref" > "payload/metadata/$branch-diff-check.txt"
+          done
+          git diff --binary --full-index 05bc0a11e5ab581cfeeb0a39a8c4d11e81d86b2d 221c65f3f2ddf64bec0faaa121e5ef545d344211 > payload/patches/windows-zip-increment-only.diff
+          git diff --binary --full-index ebd2a99587f7a9c0cb696b0bc03cccb1886eff4b 41a860d201908d5275645a9e2de622dfd4902377 > payload/patches/k6-doc-correction-only.diff
+          git diff --binary --full-index 28547365dda9e4ae4a3793d496a47fd2936cf70e e9634a8806783c8a77eaba891479ea2f836ee9a5 > payload/patches/control-probe-increment-only.diff
+          cat > payload/README.txt <<'EOF'
+          Scope: three reviewed research branches. No upstream PR, merge, or release was created.
+          ZIP branch: 221c65f3f2ddf64bec0faaa121e5ef545d344211.
+          K6 data corrections: 41a860d201908d5275645a9e2de622dfd4902377 (original benchmark source ebd2a995).
+          Control-ID probe corrections: e9634a8806783c8a77eaba891479ea2f836ee9a5.
+          The four original fork SHA/source references are unmerged; DCO/extra license grants remain unresolved.
+          Raw CI logs and zipped original GitHub artifacts are authoritative historical receipts, not independent approval.
+          EOF
+
+          for id in 39129940066 39129940045 39129879146 39118678873 39129602152 39124222779; do
+            echo "downloading CI run $id"
+            url="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$id"
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' "$url" \
+              -o "payload/ci/run-$id.json"
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' "$url/logs" \
+              -o "payload/ci/run-$id-logs.zip"
+            unzip -tqq "payload/ci/run-$id-logs.zip"
+          done
+          for pair in '39129940066 windows-zip-final' '39129940045 linux-upstream-final' '39129879146 control-probes' '39118678873 k6-pinned'; do
+            read -r id tag <<< "$pair"
+            gh run download "$id" --repo "$GITHUB_REPOSITORY" --dir "payload/artifacts/$tag"
+          done
+          {
+            date -u '+CAPTURED_UTC=%Y-%m-%dT%H:%M:%SZ'
+            git rev-parse HEAD
+            echo "CI exact SHA validated for each research source ref"
+          } > payload/metadata/CAPTURE.txt
+          (cd payload && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > metadata/SHA256SUMS.txt)
+          du -sh payload
+      - name: Export source, compressed raw logs, wheel artifacts, and checksums
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: toks-review-round3-git-and-CI
+          path: payload/
+          if-no-files-found: error
+          retention-days: 14
