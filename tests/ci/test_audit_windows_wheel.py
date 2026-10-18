@@ -75,6 +75,33 @@ class WheelAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(AuditError, "unexpected PE import"):
             audit(self.mutated({pyd: evil}))
 
+    def test_non_python_export_rejected_with_updated_record(self):
+        pyd = next(n for n in self.original if n.endswith(".pyd"))
+        self.assertIn(b"PyInit__toks", self.original[pyd])
+        evil = self.original[pyd].replace(b"PyInit__toks", b"PyInit__evil", 1)
+        with self.assertRaisesRegex(AuditError, "wrong or leaked PE export"):
+            audit(self.mutated({pyd: evil}))
+
+    def test_delay_import_directory_is_refused(self):
+        import struct
+        pyd = next(n for n in self.original if n.endswith(".pyd"))
+        binary = bytearray(self.original[pyd])
+        pe = struct.unpack_from("<I", binary, 0x3C)[0]
+        opt = pe + 24
+        struct.pack_into("<II", binary, opt + 112 + 8 * 13, 1, 32)
+        with self.assertRaisesRegex(AuditError, "delay-import"):
+            audit(self.mutated({pyd: bytes(binary)}))
+
+    def test_forged_metadata_header_is_rejected(self):
+        meta = next(n for n in self.original if n.endswith(".dist-info/METADATA"))
+        evil = self.original[meta].replace(b"Name: toks\r\n", b"Name: malicious\r\n", 1)
+        with self.assertRaisesRegex(AuditError, "invalid Name metadata"):
+            audit(self.mutated({meta: evil}))
+
+    def test_unreviewed_python_module_not_in_allowlist(self):
+        with self.assertRaisesRegex(AuditError, "unexpected wheel member"):
+            audit(self.mutated(add={"toks/sidecar.py": b"print(1)"}))
+
     def test_extension_cannot_be_replaced_by_arbitrary_bytes(self):
         pyd = next(n for n in self.original if n.endswith(".pyd"))
         with self.assertRaisesRegex(AuditError, "missing DOS header"):
