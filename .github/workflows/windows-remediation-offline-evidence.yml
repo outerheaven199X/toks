@@ -1,0 +1,82 @@
+name: windows-remediation-offline-evidence
+on:
+  push:
+    branches: [research/windows-remediation-handoff-20261018]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Collect immutable fork source and raw CI records
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p payload/source payload/patches payload/metadata payload/ci payload/original_github_artifacts
+          git fetch --no-tags origin \
+            refs/heads/master:refs/remotes/origin/master \
+            refs/heads/research/windows-wheels-reviewed:refs/remotes/origin/research/windows-wheels-reviewed \
+            refs/heads/research/windows-release-audit:refs/remotes/origin/research/windows-release-audit \
+            refs/heads/research/windows-review-remediation:refs/remotes/origin/research/windows-review-remediation
+          baseline=2ebc390a125841479fc33dc01d8c3505075a0514
+          original=ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9
+          previous=b48e237530184f142e8aae8ea80435d57a28a28a
+          fixed=17d62d4acb50223e866a6d27c5ef1bd5e54ab649
+          test "$(git rev-parse refs/remotes/origin/master)" = "$baseline"
+          test "$(git rev-parse refs/remotes/origin/research/windows-wheels-reviewed)" = "$original"
+          test "$(git rev-parse refs/remotes/origin/research/windows-release-audit)" = "$previous"
+          test "$(git rev-parse refs/remotes/origin/research/windows-review-remediation)" = "$fixed"
+          printf 'BASE=%s\nWHEELS=%s\nAUDITOR_PRIOR=%s\nREMEDIATION=%s\n' \
+            "$baseline" "$original" "$previous" "$fixed" > payload/metadata/IMMUTABLE_REFS.txt
+          git bundle create payload/source/four-stage-windows-audit.bundle \
+            refs/remotes/origin/master \
+            refs/remotes/origin/research/windows-wheels-reviewed \
+            refs/remotes/origin/research/windows-release-audit \
+            refs/remotes/origin/research/windows-review-remediation
+          git bundle verify payload/source/four-stage-windows-audit.bundle > payload/metadata/GIT_BUNDLE_VERIFY.txt 2>&1
+          for branch in master windows-wheels-reviewed windows-release-audit windows-review-remediation; do
+            ref=refs/remotes/origin/$branch
+            if test "$branch" != master; then ref=refs/remotes/origin/research/$branch; fi
+            git archive --format=tar.gz --output="payload/source/$branch.tar.gz" "$ref"
+          done
+          git diff --binary --full-index "$previous" "$fixed" > payload/patches/previous-to-fixed.diff
+          git diff --binary --full-index "$baseline" "$fixed" > payload/patches/upstream-master-to-fixed.diff
+          git format-patch --stdout "$previous".."$fixed" > payload/patches/remediation-commit-series.mbox
+          git log --format='%H %cI %s%n%b' "$baseline".."$fixed" > payload/metadata/ALL_COMMIT_MESSAGES.txt
+          git diff --check "$previous" "$fixed" > payload/metadata/DIFF_CHECK.txt
+          for id in 39121621495 39118754847 39089648806 39089648815 39089648842; do
+            echo "Fetching full CI run $id"
+            url="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$id"
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$url" -o "payload/ci/run-$id.json"
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$url/logs" -o "payload/ci/run-$id-logs.zip"
+            unzip -tqq "payload/ci/run-$id-logs.zip"
+          done
+          gh run download 39121621495 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/remediation
+          gh run download 39089648806 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/original_five_wheels
+          {
+            echo 'The validated revision is 17d62d4acb50223e866a6d27c5ef1bd5e54ab649.'
+            echo 'Source and tests are author work on unmerged fork branches. No upstream PR/release exists.'
+            echo 'The independent reviewer found five accepted injection/malformed metadata cases in the prior auditor.'
+            echo 'The new test suite exercises those cases and source Git blob pinning.'
+            echo 'Original wheels are unmerged fork builds, not upstream-distributed packages.'
+            echo 'Forced parity skips TOKS_PY_CASES=0 are not passes; TOKS_PY_N=100 is a reduced generator setting.'
+            echo 'Packaged GitHub logs are unedited exports; the final combined handoff includes the reviewer attack and corrected PR house-style kit.'
+          } > payload/README.txt
+          (cd payload && find . -type f ! -path './metadata/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > metadata/SHA256SUMS.txt)
+          du -sh payload
+      - name: Upload complete raw, pin-verified remediation evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-remediation-source-and-CI
+          path: payload/
+          retention-days: 14
+          if-no-files-found: error
