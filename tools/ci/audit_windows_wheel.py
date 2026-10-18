@@ -270,6 +270,85 @@ def normalized_pe_sha256(binary: bytes) -> str:
     return hashlib.sha256(copy).hexdigest()
 
 
+def verify_zip_layout(raw: bytes, infos: list) -> None:
+    """Require every ZIP byte to belong to exactly one declared member or directory.
+
+    ZIP readers usually trust the central directory. A crafted archive can place
+    *unlisted* local file records before it; those bytes are invisible to
+    ZipFile.namelist(), and behavior may differ across installers. For this
+    version-pinned wheel profile, reject ZIP64, split archives, archive/member
+    comments, extras, encryption, data descriptors and all unexplained bytes.
+
+    This validates ZIP layout, not the authenticity of the publisher.
+    """
+    need(len(raw) >= 22 and raw[-22:-18] == b"PK\x05\x06",
+         "ZIP has unaccounted trailer bytes, comment, or ambiguous end record")
+    eocd = len(raw) - 22
+    sig, disk, cd_disk, disk_entries, entries, cd_size, cd_off, comment_len = struct.unpack_from(
+        "<4s4H2IH", raw, eocd)
+    need(sig == b"PK\x05\x06" and disk == cd_disk == 0 and
+         disk_entries == entries == len(infos) and comment_len == 0,
+         "ZIP has a comment, multiple disks, or an inconsistent entry count")
+    need(0 < entries <= 64 and 0 < cd_off < eocd and cd_size == eocd - cd_off,
+         "ZIP central-directory boundary is inconsistent")
+    # This research build ships ordinary ZIP32 archives with zero extra fields.
+    # Reject all alternate encodings until specifically reviewed. zipfile's
+    # permissive fallback must not become the security policy here.
+    central = {}
+    off = cd_off
+    while off < eocd:
+        need(off + 46 <= eocd and raw[off:off + 4] == b"PK\x01\x02",
+             "unknown bytes or truncated ZIP central-directory record")
+        fields = struct.unpack_from("<4s6H3I5H2I", raw, off)
+        (_, made, needed, flags, method, mtime, mdate, crc, compressed,
+         expanded, name_len, extra_len, member_comment, disk_start, internal,
+         external, local_off) = fields
+        end = off + 46 + name_len + extra_len + member_comment
+        need(0 < name_len <= 255 and end <= eocd, "invalid ZIP central-directory length")
+        need(extra_len == 0 and member_comment == 0 and disk_start == 0,
+             "ZIP contains unreviewed extra fields, member comment, or disk")
+        need(flags & (1 | 8 | 64) == 0 and flags & ~0x800 == 0,
+             "encrypted, descriptor-backed, or otherwise unsupported ZIP flags")
+        name = raw[off + 46:off + 46 + name_len]
+        need(name not in central, "duplicate ZIP member in central directory")
+        central[name] = (local_off, needed, flags, method, mtime, mdate, crc,
+                         compressed, expanded)
+        off = end
+    need(off == eocd and len(central) == entries,
+         "unaccounted ZIP central-directory bytes or duplicate entries")
+
+    local_ranges = []
+    for info in infos:
+        name = info.filename.encode("utf-8")
+        need(name in central, f"ZIP member absent from central directory: {info.filename}")
+        local, needed, flags, method, mtime, mdate, crc, compressed, expanded = central[name]
+        need(local == info.header_offset and flags == info.flag_bits and
+             method == info.compress_type and compressed == info.compress_size and
+             expanded == info.file_size and crc == info.CRC,
+             f"ZIP parser and central directory disagree: {info.filename}")
+        need(0 <= local < cd_off and local + 30 <= cd_off and
+             raw[local:local + 4] == b"PK\x03\x04",
+             f"missing ZIP local header: {info.filename}")
+        (_, lneeded, lflags, lmethod, ltime, ldate, lcrc,
+         lcsize, lusize, lname, lextra) = struct.unpack_from(
+            "<4s5H3I2H", raw, local)
+        need((lneeded, lflags, lmethod, ltime, ldate, lcrc, lcsize, lusize) ==
+             (needed, flags, method, mtime, mdate, crc, compressed, expanded),
+             f"ZIP local/central metadata differs: {info.filename}")
+        need(lname == len(name) and lextra == 0 and
+             raw[local + 30:local + 30 + lname] == name,
+             f"ZIP local filename or extra fields differ: {info.filename}")
+        end = local + 30 + lname + compressed
+        need(end <= cd_off, f"ZIP local member extends beyond data region: {info.filename}")
+        local_ranges.append((local, end))
+
+    cursor = 0
+    for start, end in sorted(local_ranges):
+        need(start == cursor, "ZIP contains unreferenced local bytes or overlapping entries")
+        cursor = end
+    need(cursor == cd_off, "ZIP has an unindexed local member or other hidden bytes")
+
+
 def audit(path: Path, *, source_root: Path | None = None) -> dict:
     match = re.fullmatch(r"toks-(\d+\.\d+\.\d+)-cp(3\d{2})-cp\2-win_amd64\.whl", path.name)
     need(match is not None, "unexpected wheel name or unsupported Python/ABI tag")
@@ -283,6 +362,7 @@ def audit(path: Path, *, source_root: Path | None = None) -> dict:
     tag = f"cp{pyver}-cp{pyver}-win_amd64"
     with ZipFile(path) as z:
         infos = z.infolist()
+        verify_zip_layout(path.read_bytes(), infos)
         need(0 < len(infos) <= 64 and sum(i.file_size for i in infos) <= 32 * 1024 * 1024,
              "wheel exceeds bounded audit budget")
         need(all(i.file_size <= 16 * 1024 * 1024 for i in infos), "oversized wheel member")

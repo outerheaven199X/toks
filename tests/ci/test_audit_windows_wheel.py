@@ -55,6 +55,63 @@ class WheelAuditTests(unittest.TestCase):
                 z.writestr(n, data)
         return target
 
+    def test_reviewer_orphan_local_pth_rejected_even_when_zipfile_cannot_list_it(self):
+        import struct
+        import zlib
+        raw = self.source.read_bytes()
+        eocd = raw.rfind(b"PK\x05\x06")
+        cd_off = struct.unpack_from("<I", raw, eocd + 16)[0]
+        name = b"zz_smuggled.pth"
+        payload = b"import sys; sys.stderr.write('unexpected\\n')\n"
+        crc = zlib.crc32(payload)
+        orphan = struct.pack("<IHHHHHIIIHH", 0x04034b50, 20, 0, 0, 0, 0x21,
+                             crc, len(payload), len(payload), len(name), 0) + name + payload
+        mutated = bytearray(raw[:cd_off] + orphan + raw[cd_off:])
+        later = mutated.rfind(b"PK\x05\x06")
+        struct.pack_into("<I", mutated, later + 16, cd_off + len(orphan))
+        target = Path(self.tmp.name) / self.name
+        target.write_bytes(mutated)
+        with zipfile.ZipFile(target) as z:
+            self.assertNotIn(name.decode(), z.namelist())
+        with self.assertRaisesRegex(AuditError, "ZIP has an unindexed local member"):
+            audit(target)
+
+    def test_reviewer_nonempty_zip_comment_rejected(self):
+        target = self.mutated()
+        with zipfile.ZipFile(target, "a") as z:
+            z.comment = b"#" * 65535
+        with self.assertRaisesRegex(AuditError, "ZIP has unaccounted trailer"):
+            audit(target)
+
+    def test_archive_prefix_trailer_and_junk_rejected(self):
+        raw = self.source.read_bytes()
+        for payload in (b"not-a-wheel-prefix" + raw, raw + b"trailer-ignored-by-zipfile"):
+            target = Path(self.tmp.name) / self.name
+            target.write_bytes(payload)
+            with self.assertRaises(AuditError):
+                audit(target)
+
+    def test_reordered_uncompressed_zip_keeps_exact_members_valid(self):
+        target = Path(self.tmp.name) / self.name
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_STORED) as z:
+            for name in reversed(list(self.original)):
+                z.writestr(name, self.original[name])
+        self.assertEqual(audit(target)['native_normalized_sha256'],
+                         audit(self.source)['native_normalized_sha256'])
+
+    def test_reviewer_alternate_record_csv_quoting_keeps_semantics(self):
+        record = next(k for k in self.original if k.endswith('/RECORD'))
+        s = io.StringIO()
+        writer = csv.writer(s, lineterminator="\r\n", quoting=csv.QUOTE_ALL)
+        for name, data in self.original.items():
+            if name == record:
+                writer.writerow((name, "", ""))
+            else:
+                digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+                writer.writerow((name, "sha256=" + digest, len(data)))
+        target = self.mutated({record: s.getvalue().encode("utf-8")}, regenerate_record=False)
+        self.assertEqual(audit(target)['git_blob_members_checked'], 8)
+
     def test_valid_built_wheel(self):
         report = audit(self.source)
         self.assertGreater(report['files_checked'], 9)

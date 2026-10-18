@@ -57,11 +57,14 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.13.1"
       - name: LLVM and fresh CPython 3.12 wheel
         run: |
+          if ((uv --version).Trim() -ne "uv 0.13.1") { throw "unexpected uv version" }
           ./tools/ci/win_llvm.ps1
-          uv python install 3.12
-          uv build --wheel python --python 3.12 --out-dir build/wheels
+          uv python install 3.12.15
+          uv build --wheel python --python 3.12.15 --out-dir build/wheels
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Audit PE, RECORD and malicious wheel mutations
         run: |
@@ -80,14 +83,14 @@ jobs:
           python tools/ci/fetch_tokenizers.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $wheel = @(Get-ChildItem build/wheels/toks-*.whl)
-          uv venv --python 3.12 build/venv
-          uv pip install --python build/venv/Scripts/python.exe $wheel[0].FullName pytest tokenizers==0.23.2
+          uv venv --python 3.12.15 build/venv
+          uv pip install --python build/venv/Scripts/python.exe $wheel[0].FullName pytest==9.1.1 tokenizers==0.23.2
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Explicitly limited author-side smoke parity: 100 generated cases;
           # case-set collection deliberately disabled (six forced skips).
           $env:TOKS_PY_N = '100'
           $env:TOKS_PY_CASES = '0'
-          "Source: $env:GITHUB_SHA; TOKS_PY_N=100; TOKS_PY_CASES=0; six case-set tests forced to skip" |
+          "Source: $env:GITHUB_SHA; uv 0.13.1; CPython 3.12.15; pytest 9.1.1; tokenizers 0.23.2; TOKS_PY_N=100; TOKS_PY_CASES=0; six case-set tests forced to skip" |
             Out-File -Encoding utf8 build/audit/COVERAGE-PROFILE.txt
           & build/venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider python/tests/test_api.py python/tests/test_threads.py python/tests/test_parity.py |
             Tee-Object -FilePath build/audit/pytest-output.txt

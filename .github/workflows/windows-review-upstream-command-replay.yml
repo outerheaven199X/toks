@@ -52,7 +52,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.13.1" # v10.2.0
       - name: Pinned LLVM 21 toolchain
         run: |
           tools/ci/llvm.sh
@@ -64,6 +66,8 @@ jobs:
           set -o pipefail
           mkdir -p build/review
           echo 'PARITY_PY=3.12 TOKS_PY_N=100 TOKS_PY_CASES=0; one CPython version only' | tee build/review/python-profile.txt
+          uv --version
+          uv python install 3.12.15
           PARITY_PY=3.12 TOKS_PY_N=100 TOKS_PY_CASES=0 sh python/build.sh 3.12 2>&1 | tee build/review/python-build.log
       - name: Keep reproduction commands, failures and skips
         if: always()
