@@ -5,7 +5,11 @@
 ## Evidence
 
 Branch: https://github.com/outerheaven199X/toks/tree/research/k6-compact-lookup-prototype
-CI: https://github.com/outerheaven199X/toks/actions/runs/39118453161
+Pinned source commit: ebd2a99587f7a9c0cb696b0bc03cccb1886eff4b
+
+**Use the CI run for that exact commit**: https://github.com/outerheaven199X/toks/actions/runs/39118678873
+
+Earlier experiment run (different source commit; do not cite its ratios for the pinned result): https://github.com/outerheaven199X/toks/actions/runs/39118453161
 
 The fixture generator reads SHA-256-pinned tokenizer.json files, preserves the final raw rank for repeated left/right ID merge pairs, and writes a versioned little-endian file. The standalone C tool constructs both a dense grid and a compact bitmap + row-rank lookup. For IDs >= 1024 it uses a *sorted-array reference fallback*, not the real toks hash-table fallback.
 
@@ -21,6 +25,8 @@ Both optimized and ASan/UBSan builds verified every one of 1,048,576 low-ID pair
 | Qwen 3.8 | 4,194,304 | 280,092 | 14.975x | 1,396,163 |
 | GLM 5.3 | 4,194,304 | 288,912 | 14.518x | 1,470,225 |
 
+The compact structures occupy **0.219–0.297 MiB** (binary mebibytes, dividing bytes by 1,048,576), not 0.23–0.31 MiB.
+
 Total: 7,088,452 rank comparisons, zero mismatches. The compact size counts its C struct and priority allocation, excluding allocator bookkeeping and the original full merge table, which a real integrated path would still need.
 
 ## Negative timing result (exploratory only)
@@ -29,11 +35,13 @@ On a shared Ubuntu CI runner with compiler -O3, 200,000 synthetic low-ID queries
 
 | Model | 0% hit mix | 50% hit mix | 100% hit mix |
 |---|---:|---:|---:|
-| GPT-2 | 2.02x | 12.70x | 7.05x |
-| Llama 3 | 1.67x | 9.67x | 6.45x |
-| o200k | 1.56x | 9.89x | 5.63x |
-| Qwen 3.8 | 1.47x | 10.36x | 6.32x |
-| GLM 5.3 | 1.61x | 9.70x | 6.16x |
+| GPT-2 | 1.76x | 4.43x | 5.20x |
+| Llama 3 | 1.89x | 5.28x | 4.71x |
+| o200k | 1.95x | 6.76x | 5.31x |
+| Qwen 3.8 | 1.47x | 8.00x | 5.45x |
+| GLM 5.3 | 2.23x | 8.38x | 4.81x |
+
+Each ratio divides the **arithmetic mean of two compact samples** by the arithmetic mean of two dense samples. Full raw samples are in the pinned CI artifact; see k6-pinned-ratios.csv for all 15 cells. On an earlier shared-runner run, 50%-hit ratios reached 9.67–12.70x; the pinned run measured 4.43–8.38x. This run-to-run variability rules out quoting an exact speed penalty as a stable hardware property.
 
 Every ratio over 1 means slower. The hit mixes come from synthetic queries drawn from the merge table, **not** observed real tokenizer traffic. Dense lookups may auto-vectorize; the compact path has popcount, branches and dependent loads. Absolute nanoseconds include possible shared-runner noise. This is neither a comparison against the shipped hash-table probe nor a measurement of total toks speed.
 
