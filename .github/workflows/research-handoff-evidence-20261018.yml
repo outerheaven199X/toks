@@ -1,0 +1,115 @@
+# One-shot evidence exporter. Runs only on the non-PR handoff branch.
+name: research-handoff-evidence-20261018
+
+on:
+  push:
+    branches: [research/handoff-evidence-20261018]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: \${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Capture immutable source history, source archives, patches, and CI logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p payload/source payload/patches payload/metadata payload/ci
+          git fetch --no-tags origin \
+            refs/heads/master:refs/remotes/origin/master \
+            refs/heads/research/windows-wheels-reviewed:refs/remotes/origin/research/windows-wheels-reviewed \
+            refs/heads/research/control-id-audit:refs/remotes/origin/research/control-id-audit \
+            refs/heads/research/k6-grid-sparsity:refs/remotes/origin/research/k6-grid-sparsity
+
+          base=2ebc390a125841479fc33dc01d8c3505075a0514
+          win=ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9
+          sec=28547365dda9e4ae4a3793d496a47fd2936cf70e
+          k6=3e2635f8d8eeb3959a3a4934dbc0eb88c90e4615
+          test "$(git rev-parse refs/remotes/origin/master)" = "$base"
+          test "$(git rev-parse refs/remotes/origin/research/windows-wheels-reviewed)" = "$win"
+          test "$(git rev-parse refs/remotes/origin/research/control-id-audit)" = "$sec"
+          test "$(git rev-parse refs/remotes/origin/research/k6-grid-sparsity)" = "$k6"
+
+          {
+            printf 'Repository: %s\n' "$GITHUB_REPOSITORY"
+            printf 'Captured at (UTC): %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            printf 'master: %s\n' "$base"
+            printf 'windows-wheels-reviewed: %s\n' "$win"
+            printf 'control-id-audit: %s\n' "$sec"
+            printf 'k6-grid-sparsity: %s\n' "$k6"
+            printf 'No PR was opened by this capture workflow.\n'
+          } > payload/metadata/PINNED_REFS.txt
+
+          git bundle create payload/source/toks-four-refs.bundle \
+            refs/remotes/origin/master \
+            refs/remotes/origin/research/windows-wheels-reviewed \
+            refs/remotes/origin/research/control-id-audit \
+            refs/remotes/origin/research/k6-grid-sparsity
+          git bundle verify payload/source/toks-four-refs.bundle \
+            > payload/metadata/git-bundle-verify.txt 2>&1
+
+          git archive --format=tar.gz \
+            --output=payload/source/master.tar.gz refs/remotes/origin/master
+          for branch in windows-wheels-reviewed control-id-audit k6-grid-sparsity; do
+            ref=refs/remotes/origin/research/$branch
+            git archive --format=tar.gz --output=payload/source/$branch.tar.gz "$ref"
+            git diff --binary --full-index refs/remotes/origin/master "$ref" \
+              > "payload/patches/$branch.diff"
+            git format-patch --stdout refs/remotes/origin/master.."$ref" \
+              > "payload/patches/$branch.mbox"
+            git diff --stat refs/remotes/origin/master "$ref" \
+              > "payload/metadata/$branch.diffstat.txt"
+            git log --reverse --format='%H %cI %s' refs/remotes/origin/master.."$ref" \
+              > "payload/metadata/$branch.commits.txt"
+            git diff --check refs/remotes/origin/master "$ref" \
+              > "payload/metadata/$branch.diff-check.txt" 2>&1 || true
+          done
+          {
+            echo 'Offline: git clone toks-four-refs.bundle reviewed-toks'
+            echo 'Branches in this bundle retain refs/remotes/origin/* names.'
+            echo 'Archives reproduce each immutable source tree without Git metadata.'
+            echo 'Patches are git diff --binary from the shared master commit; mbox includes every commit.'
+            echo 'Workflow logs below are raw zipped GitHub Actions logs, not summaries.'
+          } > payload/README.txt
+
+          repo="$GITHUB_REPOSITORY"
+          runs='39089648806 39089648815 39089648842 39089280952 39089103699 39086860495 39087971367 39088163871 39088758524'
+          for id in $runs; do
+            echo "Retrieving run $id"
+            api="https://api.github.com/repos/$repo/actions/runs/$id"
+            curl --fail --silent --show-error --location --retry 3 \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "$api" --output "payload/ci/run-$id.json"
+            curl --fail --silent --show-error --location --retry 3 \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "$api/logs" --output "payload/ci/run-$id-logs.zip" \
+              || { rm -f "payload/ci/run-$id-logs.zip"; echo "Log download failed, see run metadata" > "payload/ci/run-$id-logs-UNAVAILABLE.txt"; continue; }
+            unzip -tqq "payload/ci/run-$id-logs.zip" \
+              || { mv "payload/ci/run-$id-logs.zip" "payload/ci/run-$id-logs-INVALID"; echo "Downloaded bytes were not a valid zip" > "payload/ci/run-$id-logs-UNAVAILABLE.txt"; }
+          done
+          (cd payload && find . -type f -print0 | sort -z | xargs -0 sha256sum) \
+             > payload/metadata/SHA256_FROM_RUNNER.txt
+          ls -lh payload/source payload/patches payload/ci
+      - name: Upload source-history and raw CI evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: toks-source-and-raw-ci-evidence
+          path: payload/
+          compression-level: 6
+          retention-days: 14
+          if-no-files-found: error
