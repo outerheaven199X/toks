@@ -1,0 +1,82 @@
+name: toks-research-continued-evidence
+on:
+  push:
+    branches: [research/handoff-continued-20261018]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Capture full source history, immutable patches, raw CI and original artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p payload/source payload/patches payload/metadata payload/ci payload/original_github_artifacts
+          git fetch --no-tags origin \
+            refs/heads/master:refs/remotes/origin/master \
+            refs/heads/research/windows-wheels-reviewed:refs/remotes/origin/research/windows-wheels-reviewed \
+            refs/heads/research/windows-release-audit:refs/remotes/origin/research/windows-release-audit \
+            refs/heads/research/k6-grid-sparsity:refs/remotes/origin/research/k6-grid-sparsity \
+            refs/heads/research/k6-compact-lookup-prototype:refs/remotes/origin/research/k6-compact-lookup-prototype
+          test "$(git rev-parse refs/remotes/origin/master)" = 2ebc390a125841479fc33dc01d8c3505075a0514
+          test "$(git rev-parse refs/remotes/origin/research/windows-wheels-reviewed)" = ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9
+          test "$(git rev-parse refs/remotes/origin/research/windows-release-audit)" = b48e237530184f142e8aae8ea80435d57a28a28a
+          test "$(git rev-parse refs/remotes/origin/research/k6-grid-sparsity)" = 3e2635f8d8eeb3959a3a4934dbc0eb88c90e4615
+          test "$(git rev-parse refs/remotes/origin/research/k6-compact-lookup-prototype)" = ebd2a99587f7a9c0cb696b0bc03cccb1886eff4b
+          {
+            date -u '+Captured UTC: %Y-%m-%dT%H:%M:%SZ'
+            echo 'Upstream master and fork base: 2ebc390a125841479fc33dc01d8c3505075a0514'
+            echo 'Prior Windows: ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9'
+            echo 'New Windows audit: b48e237530184f142e8aae8ea80435d57a28a28a'
+            echo 'Prior K6: 3e2635f8d8eeb3959a3a4934dbc0eb88c90e4615'
+            echo 'New K6 prototype: ebd2a99587f7a9c0cb696b0bc03cccb1886eff4b'
+          } > payload/metadata/PINNED_REFS.txt
+          git bundle create payload/source/toks-continued.bundle \
+            refs/remotes/origin/master \
+            refs/remotes/origin/research/windows-release-audit \
+            refs/remotes/origin/research/k6-compact-lookup-prototype
+          git bundle verify payload/source/toks-continued.bundle > payload/metadata/BUNDLE_VERIFY.txt 2>&1
+          for branch in windows-release-audit k6-compact-lookup-prototype; do
+            ref=refs/remotes/origin/research/$branch
+            git archive --format=tar.gz --output=payload/source/$branch.tar.gz "$ref"
+            git diff --binary --full-index refs/remotes/origin/master "$ref" > payload/patches/$branch-from-master.diff
+            git format-patch --stdout refs/remotes/origin/master.."$ref" > payload/patches/$branch-all-commits.mbox
+            git log --reverse --format='%H %cI %s%n%b' refs/remotes/origin/master.."$ref" > payload/metadata/$branch-history.txt
+            git diff --check refs/remotes/origin/master "$ref" > payload/metadata/$branch-whitespace.txt
+          done
+          git diff --binary --full-index refs/remotes/origin/research/windows-wheels-reviewed refs/remotes/origin/research/windows-release-audit > payload/patches/windows-audit-increment.diff
+          git diff --binary --full-index refs/remotes/origin/research/k6-grid-sparsity refs/remotes/origin/research/k6-compact-lookup-prototype > payload/patches/k6-prototype-increment.diff
+
+          for id in 39117969708 39118453161 39118678873; do
+            api="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$id"
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api" -o "payload/ci/run-$id.json"
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/logs" -o "payload/ci/run-$id-logs.zip"
+            unzip -tqq "payload/ci/run-$id-logs.zip"
+          done
+          gh run download 39117969708 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/windows-audit
+          gh run download 39118678873 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/k6-compact
+          {
+            echo 'This captures only the continued research. The previous handoff ZIP contains the baseline source, three original branches and their earlier evidence.'
+            echo 'All experimental raw run artifacts and CI logs here are retained unchanged.'
+            echo 'No PR, release, PyPI publication or upstream merge was performed.'
+            echo 'The compact K6 bitmap lookup is standalone, and was slower than the dense grid in the synthetic microbenchmark.'
+          } > payload/README.txt
+          (cd payload && find . -type f ! -path './metadata/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > metadata/SHA256SUMS.txt)
+          du -sh payload
+      - name: Attach research delta and verification records
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: toks-research-continued-evidence
+          path: payload/
+          retention-days: 14
+          if-no-files-found: error
