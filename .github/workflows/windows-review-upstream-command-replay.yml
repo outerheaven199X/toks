@@ -1,0 +1,77 @@
+name: windows-remediation-upstream-command-replay
+on:
+  push:
+    branches: [research/windows-review-remediation]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-linux-command-gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pinned LLVM 21 toolchain
+        run: |
+          tools/ci/llvm.sh
+          echo "$HOME/.cache/toks-llvm/21.1.8/bin" >> "$GITHUB_PATH"
+      - name: Pinned tokenizers with digest verification
+        run: python3 tools/ci/fetch_tokenizers.py
+      - name: Literal upstream native test command
+        run: |
+          set -o pipefail
+          mkdir -p build/review
+          MAKEFLAGS=-j4 make test 2>&1 | tee build/review/native-make-test.log
+      - name: Literal upstream scalar test command
+        run: |
+          set -o pipefail
+          MAKEFLAGS=-j4 TOKS_TIER=scalar make test 2>&1 | tee build/review/scalar-make-test.log
+      - name: Compare binary counts and critical fixture skips
+        run: python3 tools/ci/suites.py build/review/native-make-test.log build/review/scalar-make-test.log
+      - name: Preserve exact author-side gate outputs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Linux-upstream-make-gates
+          path: build/review/*.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  original-python-build-command:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Pinned LLVM 21 toolchain
+        run: |
+          tools/ci/llvm.sh
+          echo "$HOME/.cache/toks-llvm/21.1.8/bin" >> "$GITHUB_PATH"
+      - name: Fetch original pinned tokenizer corpus
+        run: python3 tools/ci/fetch_tokenizers.py
+      - name: Original python/build.sh with explicit scoped parity profile
+        run: |
+          set -o pipefail
+          mkdir -p build/review
+          echo 'PARITY_PY=3.12 TOKS_PY_N=100 TOKS_PY_CASES=0; one CPython version only' | tee build/review/python-profile.txt
+          PARITY_PY=3.12 TOKS_PY_N=100 TOKS_PY_CASES=0 sh python/build.sh 3.12 2>&1 | tee build/review/python-build.log
+      - name: Keep reproduction commands, failures and skips
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Linux-upstream-python-gate
+          path: |
+            build/review/python-build.log
+            build/review/python-profile.txt
+          retention-days: 14
+          if-no-files-found: warn
