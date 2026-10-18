@@ -1,0 +1,77 @@
+name: k6-compact-probe-research
+on:
+  push:
+    branches: [research/k6-compact-lookup-prototype]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compact-equivalence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile bounded standalone compact lookup
+        run: |
+          set -eu
+          mkdir -p build/k6
+          cc -std=c11 -O3 -Wall -Wextra -Werror tools/bench/k6_compact_probe.c -o build/k6/probe
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all tools/bench/k6_compact_probe.c -o build/k6/probe_san
+      - name: Synthetic duplicate, high-ID and invalid fixture tests
+        run: |
+          set -eu
+          cat > build/k6/synthetic.json <<'JSON'
+          {"model":{"type":"BPE","vocab":{"a":0,"b":1,"c":2,"ab":3,"hi":1024},"merges":["a b","b a","a b","hi a"]}}
+          JSON
+          python3 tools/bench/k6_compact_fixture.py build/k6/synthetic.json build/k6/synthetic.bin
+          build/k6/probe build/k6/synthetic.bin
+          build/k6/probe_san build/k6/synthetic.bin
+          head -c 18 build/k6/synthetic.bin > build/k6/truncated.bin
+          if build/k6/probe build/k6/truncated.bin; then echo 'TRUNCATED FIXTURE ACCEPTED' >&2; exit 1; fi
+          printf 'extra' >> build/k6/synthetic.bin
+          if build/k6/probe build/k6/synthetic.bin; then echo 'TRAILING BYTES ACCEPTED' >&2; exit 1; fi
+      - name: Fetch pinned real tokenizer inputs
+        run: python3 tools/ci/fetch_tokenizers.py
+      - name: Exhaustive equivalence on five real BPE merge tables
+        run: |
+          set -euo pipefail
+          {
+            uname -a
+            lscpu | head -35
+            echo 'NOTE: CI runner is shared, so microbench timings are exploratory.'
+          } > build/k6/host.txt
+          for model in gpt2 llama3 o200k qwen38 glm53; do
+            python3 tools/bench/k6_compact_fixture.py "$HOME/.cache/toks/tokenizers/$model" "build/k6/$model.bin" > "build/k6/$model.fixture.jsonl"
+            build/k6/probe_san "build/k6/$model.bin" > "build/k6/$model.sanitized.log"
+            build/k6/probe "build/k6/$model.bin" --bench > "build/k6/$model.bench.log"
+            grep '^VERIFIED .*mismatches=0$' "build/k6/$model.bench.log"
+            grep '^VERIFIED .*mismatches=0$' "build/k6/$model.sanitized.log"
+            grep '^MODEL ' "build/k6/$model.bench.log"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          for name in ("gpt2","llama3","o200k","qwen38","glm53"):
+              lines=Path(f"build/k6/{name}.bench.log").read_text().splitlines()
+              model=next(x for x in lines if x.startswith("MODEL "))
+              pairs=int(re.search(r"unique_pairs=(\d+)",model).group(1))
+              count=int(re.search(r"compared=(\d+)",next(x for x in lines if x.startswith("VERIFIED "))).group(1))
+              assert count == 1_048_576 + pairs + 100_000, (name,count,pairs)
+              assert len([x for x in lines if x.startswith("MICROBENCH ")]) == 12
+              print(name, count, "exact merge-rank comparisons; 12 microbench cells")
+          PY
+      - name: Publish raw fixture, sanitizer, benchmark and machine evidence
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: k6-compact-exactness-and-exploratory-timings
+          path: |
+            build/k6/*.bin
+            build/k6/*.json
+            build/k6/*.jsonl
+            build/k6/*.log
+            build/k6/host.txt
+          if-no-files-found: error
+          retention-days: 14
