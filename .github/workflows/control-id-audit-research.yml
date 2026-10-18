@@ -1,0 +1,48 @@
+name: control-id-audit-research
+on:
+  push:
+    branches: [research/control-id-audit]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Unit tests and malicious configuration negative controls
+        run: python3 -m unittest discover -s tests/security -p 'test_*.py' -v
+      - name: Fetch SHA-256-pinned actual tokenizers
+        run: python3 tools/ci/fetch_tokenizers.py
+      - name: Real-world control ID classifications (not security certifications)
+        run: |
+          mkdir -p build/security
+          python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/gpt2" --control '<|endoftext|>' > build/security/gpt2.json
+          python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/llama3" --control '<|eot_id|>' > build/security/llama3.json
+          python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/qwen38" --control '<|im_start|>' > build/security/qwen38.json
+          python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/o200k" --control '<|im_start|>' > build/security/o200k.json
+          python3 tools/security/control_id_audit.py "$HOME/.cache/toks/tokenizers/gemma4" --control '<start_of_turn>' > build/security/gemma4.json
+          python3 - <<'PY'
+          import glob, json
+          paths = sorted(glob.glob("build/security/*.json"))
+          assert len(paths) == 5, paths
+          for path in paths:
+              with open(path, encoding="utf-8") as file:
+                  data = json.load(file)
+              assert data["status"] in ("disjoint", "inconclusive"), (path, data)
+              assert data["controls"] and data["source_sha256"]
+              print(path, data["algorithm"], data["controls"], data["status"])
+          PY
+      - name: Audit evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-id-audit-evidence
+          path: build/security/*.json
+          retention-days: 14
+          if-no-files-found: warn
