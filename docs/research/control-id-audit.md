@@ -9,6 +9,13 @@ The caller passes exact names of structural delimiters. The tokenizer's
 "special" flag covers more than structural delimiters (e.g. unknown and padding
 symbols); the script deliberately does not infer which are controls.
 
+The tool validates dense model vocabulary IDs and recomputes effective
+added-token IDs using the loader's existing-vocabulary / next-ID rule.
+Any mismatch with the JSON declaration is **UNVERIFIED**, not disjoint.
+This prevents a forged or stale added-token ID from manufacturing a
+false-negative result. The CI also builds a real C-backed Python wheel
+and cross-checks the selected IDs and special flags at runtime.
+
 ## Claim and modes
 
 For a hypothetical call to encode(text, added_tokens="none",
@@ -42,6 +49,8 @@ Use --require-disjoint for an automation that should fail on overlap.
 Every JSON record includes the SHA-256 of the tokenizer bytes and the encoding
 mode being assessed. The dedicated research GitHub Actions run audits five
 pinned real tokenizer configurations and retains JSON evidence.
+It also builds a C-backed wheel, verifies IDs and special flags, then runs
+70 finite plain-text probes per model. Zero witnesses is not a proof.
 
 ## Required before calling the release requirement met
 
