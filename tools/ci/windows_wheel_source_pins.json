@@ -1,0 +1,49 @@
+{
+  "files": {
+    "licenses/LICENSE": {
+      "git_blob_sha1": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "git_path": "LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "licenses/LICENSING.md": {
+      "git_blob_sha1": "e621f56dd6737c0d14856ceaad6743072062bdab",
+      "git_path": "LICENSING.md",
+      "sha256": "dfae3649fa86f000a8b59d176b14081123ae9c2bb8b922f1aeb640d95c69b693"
+    },
+    "licenses/NOTICE": {
+      "git_blob_sha1": "7abb2900b97acba7404b9cdad1b27e4d6a8f0f18",
+      "git_path": "NOTICE",
+      "sha256": "6f5b3787d7091b8acdfc700e531d7623ba1cbd80f2c2345adc2ecced0a4771c7"
+    },
+    "licenses/THIRD_PARTY_NOTICES.md": {
+      "git_blob_sha1": "a6944f32291a7f9fc1f0a02783bbbc18721b79d3",
+      "git_path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "de0de37bdcefc048c6ce63cee14985d7cd8e4bd727061ede8ccbe66bfd872714"
+    },
+    "toks/__init__.py": {
+      "git_blob_sha1": "987e3f4a0561b9fc1b50647900fbf75ef12d4c5a",
+      "git_path": "python/toks/__init__.py",
+      "sha256": "d6e459078d96bdd4a22bb6bfd37d925238c8d2871bfda0b5cc1407e3973832f8"
+    },
+    "toks/_toks.pyi": {
+      "git_blob_sha1": "0d9484ea45beb18281f2197e39b47543dd2367aa",
+      "git_path": "python/toks/_toks.pyi",
+      "sha256": "942fbc5b22d25339854c48cb6a4d709c3215752d0f9cab8b1a8946f5706f2113"
+    },
+    "toks/_vocab.py": {
+      "git_blob_sha1": "22ca8a6eca6f609091122c463a8882ae7ae7b838",
+      "git_path": "python/toks/_vocab.py",
+      "sha256": "bc6124f87fa9d4a58f911aaaaefd979b6fde094c5740d1c19abb4e965f3937fb"
+    },
+    "toks/py.typed": {
+      "git_blob_sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "git_path": "python/toks/py.typed",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "note": "Pin code, types, and license bytes to the Git blobs of the original Windows wheel source commit. The verifier checks both SHA-1 Git object IDs and SHA-256 digests.",
+  "package_version": "0.3.2",
+  "repository": "actual-computer/toks",
+  "schema": 1,
+  "source_commit": "ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9"
+}
