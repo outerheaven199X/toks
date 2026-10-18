@@ -1,0 +1,54 @@
+# Dedicated Windows wheel validation; runs on the research branch without a PR.
+name: windows-wheel-research
+on:
+  push:
+    branches: [research/windows-wheels-reviewed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12", "3.14"]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: LLVM 21
+        run: ./tools/ci/win_llvm.ps1
+      - name: Build wheel
+        run: |
+          uv python install ${{ matrix.python }}
+          uv build --wheel python --python ${{ matrix.python }} --out-dir build/wheels
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Check wheel install and runtime
+        run: |
+          $wheel = @(Get-ChildItem build/wheels/toks-*.whl)
+          if ($wheel.Count -ne 1) { throw "Expected exactly one built wheel; found $($wheel.Count)" }
+          uv venv --python ${{ matrix.python }} build/wheel-venv
+          uv pip install --python build/wheel-venv/Scripts/python.exe $wheel[0].FullName pytest tokenizers==0.23.2
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & build/wheel-venv/Scripts/python.exe -c "import toks; assert toks.__version__; print(toks.__version__)"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Fetch pinned tokenizers
+        run: |
+          $env:HOME = $env:USERPROFILE
+          python tools/ci/fetch_tokenizers.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Windows runtime and HF parity
+        run: |
+          $env:HOME = $env:USERPROFILE
+          $env:TOKS_PY_N = '100'
+          $env:TOKS_PY_CASES = '0'
+          & build/wheel-venv/Scripts/python.exe -m pytest -q -p no:cacheprovider python/tests/test_api.py python/tests/test_threads.py python/tests/test_parity.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
