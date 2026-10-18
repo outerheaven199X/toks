@@ -110,7 +110,7 @@ class ControlIdAuditTests(unittest.TestCase):
     def test_conflicting_added_names_are_rejected(self):
         d = document({"type": "BPE", "vocab": {"a": 0}})
         d["added_tokens"].append({"content": CONTROL, "id": 8, "special": True})
-        with self.assertRaisesRegex(AuditError, "conflicting"):
+        with self.assertRaisesRegex(AuditError, "load-derived ID"):
             check(d)
 
     def test_cli_reports_overlap_without_claiming_safe(self):
