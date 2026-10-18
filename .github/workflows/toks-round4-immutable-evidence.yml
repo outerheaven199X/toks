@@ -1,0 +1,107 @@
+name: toks-round4-immutable-evidence
+on:
+  push:
+    branches: [research/round4-evidence-20261018]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Pin source and export Git bundle and reviewer patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p payload/source payload/patches payload/metadata payload/ci payload/artifacts
+          for branch in master \
+            research/windows-review-remediation \
+            research/windows-zip-structural-review \
+            research/control-id-audit \
+            research/control-id-probe-correction \
+            research/k6-compact-lookup-prototype \
+            research/k6-pinned-evidence-correction; do
+            git fetch --no-tags origin "refs/heads/$branch:refs/remotes/origin/$branch"
+          done
+          test "$(git rev-parse refs/remotes/origin/master)" = 2ebc390a125841479fc33dc01d8c3505075a0514
+          test "$(git rev-parse refs/remotes/origin/research/windows-review-remediation)" = 05bc0a11e5ab581cfeeb0a39a8c4d11e81d86b2d
+          test "$(git rev-parse refs/remotes/origin/research/windows-zip-structural-review)" = 5eccc3789a9ce05a63b74ca825d5028d5d29da12
+          test "$(git rev-parse refs/remotes/origin/research/control-id-audit)" = 28547365dda9e4ae4a3793d496a47fd2936cf70e
+          test "$(git rev-parse refs/remotes/origin/research/control-id-probe-correction)" = c0037e3e2debc2f9b765c72e10e23530b2ef178b
+          test "$(git rev-parse refs/remotes/origin/research/k6-compact-lookup-prototype)" = ebd2a99587f7a9c0cb696b0bc03cccb1886eff4b
+          test "$(git rev-parse refs/remotes/origin/research/k6-pinned-evidence-correction)" = 7ace12b8f4f7881b7e0c205fcc961a7135273272
+
+          {
+            date -u '+CAPTURE_UTC=%Y-%m-%dT%H:%M:%SZ'
+            echo 'UPSTREAM_MASTER=2ebc390a125841479fc33dc01d8c3505075a0514'
+            echo 'WINDOWS_BEFORE=05bc0a11e5ab581cfeeb0a39a8c4d11e81d86b2d'
+            echo 'WINDOWS_FINAL=5eccc3789a9ce05a63b74ca825d5028d5d29da12'
+            echo 'CONTROL_BEFORE=28547365dda9e4ae4a3793d496a47fd2936cf70e'
+            echo 'CONTROL_FINAL=c0037e3e2debc2f9b765c72e10e23530b2ef178b'
+            echo 'K6_PINNED_CODE=ebd2a99587f7a9c0cb696b0bc03cccb1886eff4b'
+            echo 'K6_FINAL_DOC=7ace12b8f4f7881b7e0c205fcc961a7135273272'
+          } > payload/metadata/PINNED_SOURCE_REFS.txt
+
+          git bundle create payload/source/review-round4-all-seven-refs.bundle \
+            refs/remotes/origin/master \
+            refs/remotes/origin/research/windows-review-remediation \
+            refs/remotes/origin/research/windows-zip-structural-review \
+            refs/remotes/origin/research/control-id-audit \
+            refs/remotes/origin/research/control-id-probe-correction \
+            refs/remotes/origin/research/k6-compact-lookup-prototype \
+            refs/remotes/origin/research/k6-pinned-evidence-correction
+          git bundle verify payload/source/review-round4-all-seven-refs.bundle > payload/metadata/GIT_BUNDLE_VERIFY.txt 2>&1
+          git archive --format=tar.gz --output=payload/source/upstream-master.tar.gz refs/remotes/origin/master
+
+          for branch in windows-zip-structural-review control-id-probe-correction k6-pinned-evidence-correction; do
+            ref="refs/remotes/origin/research/$branch"
+            git archive --format=tar.gz --output="payload/source/$branch.tar.gz" "$ref"
+            git diff --binary --full-index refs/remotes/origin/master "$ref" > "payload/patches/$branch-from-base.diff"
+            git format-patch --stdout refs/remotes/origin/master.."$ref" > "payload/patches/$branch-commits.mbox"
+            git log --reverse --format='%H %cI %s%n%b' refs/remotes/origin/master.."$ref" > "payload/metadata/$branch-commits.txt"
+            git diff --check refs/remotes/origin/master "$ref" > "payload/metadata/$branch-diff-check.txt"
+          done
+          git diff --binary --full-index 05bc0a11e5ab581cfeeb0a39a8c4d11e81d86b2d 5eccc3789a9ce05a63b74ca825d5028d5d29da12 > payload/patches/windows-round4-only.diff
+          git diff --binary --full-index 28547365dda9e4ae4a3793d496a47fd2936cf70e c0037e3e2debc2f9b765c72e10e23530b2ef178b > payload/patches/control-round4-only.diff
+          git diff --binary --full-index ebd2a99587f7a9c0cb696b0bc03cccb1886eff4b 7ace12b8f4f7881b7e0c205fcc961a7135273272 > payload/patches/k6-round4-only.diff
+
+          for id in 39133036070 39133035980 39133266670 39132975361 39118678873; do
+            api="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$id"
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' "$api" \
+              -o "payload/ci/run-$id.json"
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' "$api/logs" \
+              -o "payload/ci/run-$id-logs.zip"
+            unzip -tqq "payload/ci/run-$id-logs.zip"
+          done
+          gh run download 39133036070 --repo "$GITHUB_REPOSITORY" --dir payload/artifacts/windows-cp312-and-original-five
+          gh run download 39133035980 --repo "$GITHUB_REPOSITORY" --dir payload/artifacts/linux-original-command-gates
+          gh run download 39133266670 --repo "$GITHUB_REPOSITORY" --dir payload/artifacts/control-probe-recheck
+          gh run download 39118678873 --repo "$GITHUB_REPOSITORY" --dir payload/artifacts/k6-pinned-previous-run
+          {
+            echo 'This captures author research at exact immutable source SHAs.'
+            echo 'All raw workflow logs are unedited downloads from GitHub.'
+            echo 'The full Git bundle and source archives permit offline independent examination.'
+            echo 'No PR or upstream release or publisher attestation has been created.'
+            echo 'Earlier failed CI attempts are preserved here and in the prior complete handoff.'
+            echo 'Windows 3.12 reduced HF parity uses TOKS_PY_N=100 and TOKS_PY_CASES=0: 9 skips, 6 forced.'
+            echo 'The K6 reference and candidate derive from the same fixture, not independent HF oracles.'
+          } > payload/README.txt
+          (cd payload && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > metadata/SHA256SUMS.txt)
+          du -sh payload
+      - name: Upload independently checkable author receipts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: toks-round4-source-and-raw-evidence
+          path: payload/
+          retention-days: 14
+          if-no-files-found: error
