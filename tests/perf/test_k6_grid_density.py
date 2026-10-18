@@ -34,6 +34,10 @@ class K6OccupancyTests(unittest.TestCase):
         self.assertEqual(r["bytes_theoretical"]["dense_u32_grid"], 4 * 1024 * 1024)
         self.assertEqual(r["bytes_theoretical"]["bitmap_plus_u32_prios_and_row_offsets"],
                          128 * 1024 + 4 * 2 + (LOW + 1) * 4)
+        self.assertEqual(
+            r["bytes_theoretical"]["bitmap_plus_u16_word_prefix_u32_prios_and_row_offsets"],
+            128 * 1024 + 32 * 1024 + 4 * 2 + (LOW + 1) * 4
+        )
 
     def test_split_and_array_merge_forms(self):
         self.assertEqual(pair_tokens("aa bb", 0), ("aa", "bb"))

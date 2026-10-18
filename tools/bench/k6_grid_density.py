@@ -73,6 +73,9 @@ def analyze(source: object, sha256: str) -> dict:
     estimates = {
         "dense_u32_grid": DENSE_BYTES,
         "bitmap_plus_u32_prios_and_row_offsets": bitmap + 4 * count + row_offsets,
+        "bitmap_plus_u16_word_prefix_u32_prios_and_row_offsets": (
+            bitmap + 2 * ((LOW * LOW) // 64) + 4 * count + row_offsets
+        ),
         "csr_u16_columns_u32_prios_unpadded": 6 * count + row_offsets,
         "only_nonempty_dense_rows_plus_index": 4 * LOW * len(rows) + 4 * LOW,
     }

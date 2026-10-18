@@ -19,6 +19,9 @@ The output compares only *theoretical storage*:
 - 4,194,304 bytes: full dense grid of u32 prios.
 - 131,072 bytes bitmap + 4 bytes per occupied key + 4,100 bytes
   row offsets. Random lookup would require rank/select and rank data.
+- A more realistic direct-index candidate adds 32,768 bytes of u16
+  within-row prefixes, one per 64-bit bitmap word. Lookup still needs
+  bit selection, popcount, and a priority-array load.
 - 4,100 bytes row offsets + 2 bytes for each right ID and 4 bytes per
   occupied key. This unpadded CSR layout would require a search.
 - 4 bytes per row index + a full 4096-byte row for each nonempty left ID.
