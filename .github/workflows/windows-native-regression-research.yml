@@ -1,0 +1,51 @@
+name: windows-native-regression-research
+on:
+  push:
+    branches: [research/windows-wheels-reviewed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  c-native-regression:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - name: Preserve Linux-compatible line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: LLVM 21
+        run: ./tools/ci/win_llvm.ps1
+      - name: Pinned tokenizer inputs
+        run: |
+          $env:HOME = $env:USERPROFILE
+          python tools/ci/fetch_tokenizers.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Full native C/asm build (not the wheel-only mode)
+        run: |
+          cmd /c tools\win\build.cmd
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: All C suites, native and scalar tiers
+        timeout-minutes: 13
+        run: |
+          $env:HOME = $env:USERPROFILE
+          ./tools/ci/win_test.ps1 native scalar
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/ci/suites.py build/ci/native.log build/ci/scalar.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Evidence logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-c-native-regression
+          path: build/ci/*.log
+          retention-days: 14
+          if-no-files-found: warn
