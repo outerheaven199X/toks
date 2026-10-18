@@ -39,8 +39,10 @@ def source_pins() -> dict:
         raise AuditError(f"missing/malformed source pin manifest: {exc}") from exc
     need(obj.get("schema") == 1 and obj.get("source_commit") == PINNED_SOURCE_COMMIT,
          "source pin manifest has an unexpected source commit/schema")
-    need(obj.get("repository") == "actual-computer/toks" and obj.get("package_version") == "0.3.2",
-         "source pin manifest has unexpected repository/version")
+    need(obj.get("repository") == "outerheaven199X/toks" and
+         obj.get("upstream_repository") == "actual-computer/toks" and
+         obj.get("package_version") == "0.3.2",
+         "source pin manifest has unexpected fork/upstream/version")
     native = obj.get("native_extension_normalized_sha256")
     need(isinstance(native, dict) and set(native) == {"310", "311", "312", "313", "314"},
          "source pin manifest lacks the five native extension fingerprints")

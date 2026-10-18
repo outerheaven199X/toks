@@ -168,6 +168,8 @@ class WheelAuditTests(unittest.TestCase):
     def test_local_pins_cover_expected_contents(self):
         pins = source_pins()
         self.assertEqual(pins['source_commit'], 'ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9')
+        self.assertEqual(pins['repository'], 'outerheaven199X/toks')
+        self.assertEqual(pins['upstream_repository'], 'actual-computer/toks')
         self.assertEqual(len(pins['files']), 8)
         self.assertIn('toks/__init__.py', pins['files'])
         report = audit(self.source)
