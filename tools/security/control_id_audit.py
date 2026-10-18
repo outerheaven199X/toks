@@ -63,6 +63,8 @@ def model_ids(model: object) -> tuple[str, set[int]]:
         unk = model.get("unk_token")
         if unk is not None and (not isinstance(unk, str) or unk not in vocab):
             raise AuditError(f"{kind}: unknown token is not in the model vocabulary")
+        if ids != set(range(len(vocab))):
+            raise AuditError(f"{kind}: IDs are sparse or duplicated; cannot model load-assigned IDs")
         return kind, ids
     if kind == "Unigram":
         if not isinstance(vocab, list) or not vocab:
@@ -73,6 +75,8 @@ def model_ids(model: object) -> tuple[str, set[int]]:
         unk = model.get("unk_id")
         if unk is not None and _id(unk, "Unigram unk_id") >= len(vocab):
             raise AuditError("Unigram: unk_id is out of vocabulary")
+        if len({row[0] for row in vocab}) != len(vocab):
+            raise AuditError("Unigram: duplicate vocabulary spellings are not modeled")
         return kind, set(range(len(vocab)))
     raise AuditError(f"unsupported model kind {kind!r}; cannot certify")
 
@@ -85,24 +89,42 @@ def audit(document: object, controls: list[str], source_sha256: str) -> dict:
         raise AuditError("supply at least one nonempty --control name")
     if len(controls) != len(set(controls)):
         raise AuditError("duplicate --control name")
-    kind, emitted_ids = model_ids(document.get("model"))
+    model = document.get("model")
+    kind, emitted_ids = model_ids(model)
+    if kind == "Unigram":
+        model_strings = {row[0]: i for i, row in enumerate(model["vocab"])}
+    else:
+        model_strings = model["vocab"]
     added = document.get("added_tokens")
     if not isinstance(added, list):
         raise AuditError("added_tokens must be a list")
-    special = {}
+    special, assigned = {}, {}
+    next_id = len(model_strings)
     for i, entry in enumerate(added):
         if not isinstance(entry, dict):
             raise AuditError(f"added_tokens[{i}] is not an object")
         name = entry.get("content")
-        if not isinstance(name, str):
-            raise AuditError(f"added_tokens[{i}] lacks a string content")
-        idx = _id(entry.get("id"), f"added_tokens[{i}]")
+        if not isinstance(name, str) or not name:
+            raise AuditError(f"added_tokens[{i}] lacks nonempty string content")
+        declared = _id(entry.get("id"), f"added_tokens[{i}]")
         is_special = entry.get("special")
         if type(is_special) is not bool:
             raise AuditError(f"added_tokens[{i}] has no boolean special flag")
+        # toks's added-token loader does not trust the JSON ID. It finds an
+        # existing model string or allocates the next id on first appearance.
+        if name not in assigned:
+            if name in model_strings:
+                assigned[name] = model_strings[name]
+            else:
+                assigned[name] = next_id
+                next_id += 1
+        idx = assigned[name]
+        if declared != idx:
+            raise AuditError(
+                f"added_tokens[{i}] {name!r}: declared ID {declared} "
+                f"differs from load-derived ID {idx}"
+            )
         if is_special:
-            if name in special and special[name] != idx:
-                raise AuditError(f"special token {name!r} has conflicting IDs")
             special[name] = idx
     findings = []
     for name in controls:
