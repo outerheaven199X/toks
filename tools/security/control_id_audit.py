@@ -38,6 +38,20 @@ def model_ids(model: object) -> tuple[str, set[int]]:
         raise AuditError("model must be an object")
     kind = model.get("type")
     vocab = model.get("vocab")
+    if kind is None:
+        # hf's untagged legacy model enum: infer only from unambiguous shapes.
+        # config.c does the same for typeless WordPiece/Unigram, then BPE.
+        if isinstance(vocab, list):
+            kind = "Unigram"
+        elif isinstance(vocab, dict) and isinstance(model.get("merges"), list):
+            kind = "BPE"
+        elif isinstance(vocab, dict) and "merges" not in model and all(
+            field in model for field in
+            ("unk_token", "continuing_subword_prefix", "max_input_chars_per_word")
+        ):
+            kind = "WordPiece"
+        else:
+            raise AuditError("typeless model has no unambiguous BPE, WordPiece or Unigram shape")
     if kind in ("BPE", "WordPiece"):
         if not isinstance(vocab, dict) or not vocab:
             raise AuditError(f"{kind}: expected a nonempty object vocabulary")
