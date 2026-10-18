@@ -17,7 +17,9 @@ from tools.security.control_id_audit import AuditError, audit, model_ids  # noqa
 CONTROL = "<|ctrl|>"
 
 
-def document(model, idx=7, special=True):
+def document(model, idx=None, special=True):
+    if idx is None:
+        idx = len(model["vocab"])
     return {
         "model": model,
         "added_tokens": [{"content": CONTROL, "id": idx, "special": special}],
@@ -33,7 +35,7 @@ def check(doc, names=None):
 
 class ControlIdAuditTests(unittest.TestCase):
     def test_byte_bpe_disjoint(self):
-        d = document({"type": "BPE", "vocab": {"a": 0, "ab": 2}})
+        d = document({"type": "BPE", "vocab": {"a": 0, "ab": 1}})
         r = check(d)
         self.assertEqual(r["status"], "disjoint")
         self.assertEqual(r["controls"][0]["verdict"], "vocab_disjoint")
@@ -41,7 +43,7 @@ class ControlIdAuditTests(unittest.TestCase):
         self.assertFalse(r["encoding_mode"]["add_special_tokens"])
 
     def test_overlap_is_inconclusive_not_a_proof_of_reachability(self):
-        d = document({"type": "BPE", "vocab": {"a": 0, "<|ctrl|>": 7}})
+        d = document({"type": "BPE", "vocab": {"a": 0, "<|ctrl|>": 1}}, idx=1)
         r = check(d)
         self.assertEqual(r["status"], "inconclusive")
         self.assertEqual(r["controls"][0]["verdict"], "vocab_overlap")
@@ -52,10 +54,11 @@ class ControlIdAuditTests(unittest.TestCase):
         self.assertEqual(check(d)["status"], "disjoint")
 
     def test_unigram_indices_include_unknown(self):
-        d = document({"type": "Unigram", "vocab": [["<unk>", 0.0], ["hi", -1.0]],
+        d = document({"type": "Unigram", "vocab": [["<unk>", 0.0], [CONTROL, -1.0]],
                       "unk_id": 0}, idx=1)
         self.assertEqual(check(d)["status"], "inconclusive")
-        d["added_tokens"][0]["id"] = 3
+        d["model"]["vocab"][1][0] = "hi"
+        d["added_tokens"][0]["id"] = 2
         self.assertEqual(check(d)["status"], "disjoint")
 
     def test_legacy_type_inference_requires_unambiguous_shape(self):
@@ -96,6 +99,14 @@ class ControlIdAuditTests(unittest.TestCase):
         with self.assertRaises(AuditError):
             model_ids(None)
 
+    def test_forged_json_id_cannot_appear_safe(self):
+        d = document({"type": "BPE", "vocab": {"a": 0, CONTROL: 1}}, idx=7)
+        with self.assertRaisesRegex(AuditError, "load-derived ID"):
+            check(d)
+        d = document({"type": "BPE", "vocab": {"a": 0}}, idx=0)
+        with self.assertRaisesRegex(AuditError, "load-derived ID"):
+            check(d)
+
     def test_conflicting_added_names_are_rejected(self):
         d = document({"type": "BPE", "vocab": {"a": 0}})
         d["added_tokens"].append({"content": CONTROL, "id": 8, "special": True})
@@ -103,7 +114,7 @@ class ControlIdAuditTests(unittest.TestCase):
             check(d)
 
     def test_cli_reports_overlap_without_claiming_safe(self):
-        d = document({"type": "BPE", "vocab": {"a": 7}})
+        d = document({"type": "BPE", "vocab": {"a": 0, CONTROL: 1}}, idx=1)
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "tokenizer.json"
             blob = json.dumps(d).encode("utf-8")
