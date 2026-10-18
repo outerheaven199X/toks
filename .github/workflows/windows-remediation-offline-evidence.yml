@@ -30,7 +30,7 @@ jobs:
           baseline=2ebc390a125841479fc33dc01d8c3505075a0514
           original=ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9
           previous=b48e237530184f142e8aae8ea80435d57a28a28a
-          fixed=89fe283a6612d255f03e654b6f11983408a6a5cc
+          fixed=05bc0a11e5ab581cfeeb0a39a8c4d11e81d86b2d
           test "$(git rev-parse refs/remotes/origin/master)" = "$baseline"
           test "$(git rev-parse refs/remotes/origin/research/windows-wheels-reviewed)" = "$original"
           test "$(git rev-parse refs/remotes/origin/research/windows-release-audit)" = "$previous"
@@ -53,23 +53,24 @@ jobs:
           git format-patch --stdout "$previous".."$fixed" > payload/patches/remediation-commit-series.mbox
           git log --format='%H %cI %s%n%b' "$baseline".."$fixed" > payload/metadata/ALL_COMMIT_MESSAGES.txt
           git diff --check "$previous" "$fixed" > payload/metadata/DIFF_CHECK.txt
-          for id in 39121621495 39118754847 39089648806 39089648815 39089648842; do
+          for id in 39124222779 39124222719 39123679612 39123679663 39122381882 39121621495 39118754847 39122296108 39089648806 39089648815 39089648842; do
             echo "Fetching full CI run $id"
             url="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$id"
             curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$url" -o "payload/ci/run-$id.json"
             curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$url/logs" -o "payload/ci/run-$id-logs.zip"
             unzip -tqq "payload/ci/run-$id-logs.zip"
           done
-          gh run download 39121621495 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/remediation
+          gh run download 39124222779 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/remediation_latest
+          gh run download 39124222719 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/upstream_commands
           gh run download 39089648806 --repo "$GITHUB_REPOSITORY" --dir payload/original_github_artifacts/original_five_wheels
           {
-            echo 'The validated revision is 89fe283a6612d255f03e654b6f11983408a6a5cc.'
+            echo 'The final candidate revision is 05bc0a11e5ab581cfeeb0a39a8c4d11e81d86b2d.'
             echo 'Source and tests are author work on unmerged fork branches. No upstream PR/release exists.'
             echo 'The independent reviewer found five accepted injection/malformed metadata cases in the prior auditor.'
-            echo 'The new test suite exercises those cases and source Git blob pinning.'
+            echo 'The final mutation suite adds code-section fingerprints, two-timestamp normalization, full dist-info SHA-256 pinning, and explicit Git-fork provenance.'
             echo 'Original wheels are unmerged fork builds, not upstream-distributed packages.'
             echo 'Forced parity skips TOKS_PY_CASES=0 are not passes; TOKS_PY_N=100 is a reduced generator setting.'
-            echo 'Packaged GitHub logs are unedited exports; the final combined handoff includes the reviewer attack and corrected PR house-style kit.'
+            echo 'Packaged GitHub logs are unedited exports, including Linux upstream make/scalar/python build and the full final Windows test; the final combined handoff adds unchanged reviewer attacks and a corrected house-style kit.'
           } > payload/README.txt
           (cd payload && find . -type f ! -path './metadata/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > metadata/SHA256SUMS.txt)
           du -sh payload
