@@ -26,7 +26,7 @@ class AuditError(ValueError):
     pass
 
 
-# This checker is a *versioned review gate*, not a generic PyPI wheel validator.
+# This is a version-pinned research auditor, not an upstream release workflow or a generic PyPI wheel validator.
 # The GitHub source ref is not supplied by the untrusted wheel.
 PINNED_SOURCE_COMMIT = "ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9"
 PINS_FILE = Path(__file__).with_name("windows_wheel_source_pins.json")
