@@ -41,6 +41,13 @@ def source_pins() -> dict:
          "source pin manifest has an unexpected source commit/schema")
     need(obj.get("repository") == "actual-computer/toks" and obj.get("package_version") == "0.3.2",
          "source pin manifest has unexpected repository/version")
+    native = obj.get("native_extension_normalized_sha256")
+    need(isinstance(native, dict) and set(native) == {"310", "311", "312", "313", "314"},
+         "source pin manifest lacks the five native extension fingerprints")
+    need(all(isinstance(v, str) and re.fullmatch(r"[a-f0-9]{64}", v) for v in native.values()),
+         "malformed native extension fingerprints")
+    need(obj.get("native_reference_run_id") == 39089648806,
+         "unknown reference build for native extension fingerprints")
     files = obj.get("files")
     need(isinstance(files, dict), "source pin manifest has no file list")
     expected = {"toks/__init__.py", "toks/_vocab.py", "toks/_toks.pyi", "toks/py.typed",
@@ -208,6 +215,51 @@ def pe_imports(b: bytes) -> list[str]:
     return found
 
 
+def normalized_pe_sha256(binary: bytes) -> str:
+    """Fingerprint the full .pyd, ignoring ONLY two linker timestamps.
+
+    Clang/LLD 21 on the pinned Windows runners changes the COFF header timestamp
+    and the IMAGE_DEBUG_DIRECTORY timestamp on every rebuild. Both fields are
+    identified from the PE tables and must agree. Every other byte, including
+    code, import data, resource data and debug records, is hashed unchanged.
+    This is reproducibility against one pinned *binary build*, not a proof of
+    provenance or of the absence of malicious source code in that reference.
+    """
+    pe = u32(binary, 0x3c)
+    need(binary[:2] == b"MZ" and binary[pe:pe + 4] == b"PE\x00\x00",
+         "bad PE image for normalized fingerprint")
+    opt = pe + 24
+    nsec, opt_len = u16(binary, pe + 6), u16(binary, pe + 20)
+    need(0 < nsec <= 96 and u16(binary, opt) == 0x20b,
+         "unsupported PE architecture for normalized fingerprint")
+    dirs = u32(binary, opt + 108)
+    need(dirs >= 7 and opt_len >= 112 + 7 * 8,
+         "missing PE debug directory for normalized fingerprint")
+    drva, dsize = u32(binary, opt + 112 + 6 * 8), u32(binary, opt + 116 + 6 * 8)
+    need(drva != 0 and dsize == 28, "unsupported debug directory count/size")
+    section_start = opt + opt_len
+    need(section_start + nsec * 40 <= len(binary), "truncated PE section table")
+    matches = []
+    for i in range(nsec):
+        o = section_start + 40 * i
+        virtual_size, va, raw_size, raw_start = [u32(binary, o + k) for k in (8, 12, 16, 20)]
+        if va <= drva and drva + dsize <= va + max(virtual_size, raw_size):
+            delta = drva - va
+            need(delta + dsize <= raw_size and raw_start + delta + dsize <= len(binary),
+                 "PE debug directory has no matching raw bytes")
+            matches.append(raw_start + delta)
+    need(len(matches) == 1, "PE debug directory has ambiguous or missing section mapping")
+    debug = matches[0]
+    need(u32(binary, debug) == 0 and u32(binary, debug + 12) == 13,
+         "unexpected PE debug directory shape (expected single POGO entry)")
+    stamp_a, stamp_b = u32(binary, pe + 8), u32(binary, debug + 4)
+    need(stamp_a == stamp_b, "PE linker timestamps do not agree")
+    copy = bytearray(binary)
+    copy[pe + 8:pe + 12] = b"\x00" * 4
+    copy[debug + 4:debug + 8] = b"\x00" * 4
+    return hashlib.sha256(copy).hexdigest()
+
+
 def audit(path: Path, *, source_root: Path | None = None) -> dict:
     match = re.fullmatch(r"toks-(\d+\.\d+\.\d+)-cp(3\d{2})-cp\2-win_amd64\.whl", path.name)
     need(match is not None, "unexpected wheel name or unsupported Python/ABI tag")
@@ -306,11 +358,16 @@ def audit(path: Path, *, source_root: Path | None = None) -> dict:
                       not re.fullmatch(r"api-ms-win-crt-[a-z0-9-]+\.dll", d.lower())]
         need(not unexpected, f"unexpected PE import dependencies: {unexpected}")
         need(f"python{pyver}.dll" in [x.lower() for x in imported], "wrong/missing CPython DLL import")
+        native_digest = normalized_pe_sha256(pe)
+        need(native_digest == pins["native_extension_normalized_sha256"][pyver],
+             "native extension fingerprint differs from the pinned reference build")
         return {"wheel": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 "source_commit": PINNED_SOURCE_COMMIT, "git_blob_members_checked": len(pins["files"]),
                 "git_source_independently_checked": source_root is not None,
                 "bytes": path.stat().st_size, "python": f"3.{pyver[1:]}", "tag": tag,
                 "extension": pydb[0], "extension_sha256": hashlib.sha256(pe).hexdigest(),
+                "native_normalized_sha256": native_digest,
+                "native_reference_run_id": pins["native_reference_run_id"],
                 "imports": sorted(imported, key=str.lower), "files_checked": len(files) - 1}
 
 

@@ -45,5 +45,14 @@
   "package_version": "0.3.2",
   "repository": "actual-computer/toks",
   "schema": 1,
-  "source_commit": "ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9"
+  "source_commit": "ca80a3ed4a45fdabd934f5b5ff818ac3efc0f3e9",
+  "native_reference_run_id": 39089648806,
+  "native_extension_normalized_sha256": {
+    "310": "aeb20535ae37d3d6d2aa802b4762a95941a1230ce4bb9bf44aa7bc91db730fa7",
+    "311": "1a83cb472d491a4baf315c2492fa81ce572e53e260b259e079a681541090fe9f",
+    "312": "a362d58b534f217a24b2b06399eb0ce87fd323d1271340ee5011db1947f8a2ad",
+    "313": "2c7aca8b7a33e9a9b3e68e176c35259cc9a8a710b7cc35caac90397eccb56a9d",
+    "314": "e112a1235226c9145bd3e4b2d980011ec21dea5fbc82ea2d5254b37dcbef3610"
+  },
+  "native_normalization": "PE COFF TimeDateStamp and single IMAGE_DEBUG_DIRECTORY TimeDateStamp only; all other extension bytes are pinned to reference run 39089648806."
 }

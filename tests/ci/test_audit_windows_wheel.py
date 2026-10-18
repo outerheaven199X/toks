@@ -178,6 +178,53 @@ class WheelAuditTests(unittest.TestCase):
     def test_source_pins_match_actual_git_commit(self):
         verify_source_git(Path(os.environ['TOKS_SOURCE_REPO']), source_pins())
 
+    def test_native_text_tamper_rejected_even_with_matching_import_export_and_record(self):
+        import struct
+        name = next(n for n in self.original if n.endswith('.pyd'))
+        binary = bytearray(self.original[name])
+        pe = struct.unpack_from('<I', binary, 0x3C)[0]
+        opt = pe + 24
+        first_section = opt + struct.unpack_from('<H', binary, pe + 20)[0]
+        raw = struct.unpack_from('<I', binary, first_section + 20)[0]
+        self.assertEqual(binary[first_section:first_section + 5], b'.text')
+        binary[raw + 256] ^= 1
+        with self.assertRaisesRegex(AuditError, 'native extension fingerprint differs'):
+            audit(self.mutated({name: bytes(binary)}))
+
+    def test_identical_compiled_code_with_new_linker_timestamps_is_accepted(self):
+        import struct
+        name = next(n for n in self.original if n.endswith('.pyd'))
+        binary = bytearray(self.original[name])
+        pe = struct.unpack_from('<I', binary, 0x3C)[0]
+        opt = pe + 24
+        sections = struct.unpack_from('<H', binary, pe + 6)[0]
+        table = opt + struct.unpack_from('<H', binary, pe + 20)[0]
+        debug_rva = struct.unpack_from('<I', binary, opt + 112 + 6 * 8)[0]
+        debug_raw = None
+        for i in range(sections):
+            off = table + 40 * i
+            vs, va, sz, raw = struct.unpack_from('<IIII', binary, off + 8)
+            if va <= debug_rva < va + max(vs, sz):
+                self.assertIsNone(debug_raw)
+                debug_raw = raw + debug_rva - va
+        self.assertIsNotNone(debug_raw)
+        old = struct.unpack_from('<I', binary, pe + 8)[0]
+        stamp = (old + 873) & 0xffffffff
+        struct.pack_into('<I', binary, pe + 8, stamp)
+        struct.pack_into('<I', binary, debug_raw + 4, stamp)
+        report = audit(self.mutated({name: bytes(binary)}))
+        self.assertEqual(report['native_normalized_sha256'],
+                         audit(self.source)['native_normalized_sha256'])
+
+    def test_inconsistent_linker_timestamps_rejected(self):
+        import struct
+        name = next(n for n in self.original if n.endswith('.pyd'))
+        binary = bytearray(self.original[name])
+        pe = struct.unpack_from('<I', binary, 0x3C)[0]
+        struct.pack_into('<I', binary, pe + 8, 1)
+        with self.assertRaisesRegex(AuditError, 'linker timestamps do not agree'):
+            audit(self.mutated({name: bytes(binary)}))
+
     def test_extension_cannot_be_replaced_by_arbitrary_bytes(self):
         pyd = next(n for n in self.original if n.endswith('.pyd'))
         with self.assertRaisesRegex(AuditError, 'missing DOS header'):
