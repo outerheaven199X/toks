@@ -18,6 +18,7 @@ from email.parser import Parser
 import stat
 import struct
 import sys
+import zlib
 from pathlib import Path, PurePosixPath
 from zipfile import BadZipFile, ZipFile
 
@@ -270,6 +271,35 @@ def normalized_pe_sha256(binary: bytes) -> str:
     return hashlib.sha256(copy).hexdigest()
 
 
+def verify_zip_member_stream(fragment: bytes, method: int, expanded: int, crc: int, name: str) -> None:
+    """Require one complete compression stream to consume every declared byte.
+
+    ZIP local/central sizes can agree even when a deflate stream ends early,
+    leaving another local record hidden in its unconsumed tail. Do not use
+    ZipFile.read() or testzip() alone as a complete stream-consumption check.
+    """
+    need(0 <= expanded <= 16 * 1024 * 1024 and len(fragment) <= 16 * 1024 * 1024,
+         f"ZIP member exceeds audit bounds: {name}")
+    if method == 0:
+        need(len(fragment) == expanded, f"ZIP stored member size mismatch: {name}")
+        output = fragment
+    elif method == 8:
+        try:
+            inflater = zlib.decompressobj(-15)
+            output = inflater.decompress(fragment, expanded + 1)
+        except zlib.error as exc:
+            raise AuditError(f"malformed ZIP raw deflate stream: {name}: {exc}") from exc
+        need(inflater.eof,
+             f"ZIP deflate stream is incomplete or expands past declared size: {name}")
+        need(not inflater.unused_data and not inflater.unconsumed_tail,
+             f"ZIP deflate stream has trailing compressed bytes: {name}")
+        need(len(output) == expanded, f"ZIP deflate output size mismatch: {name}")
+    else:
+        raise AuditError(f"unsupported ZIP compression method {method}: {name}")
+    need((zlib.crc32(output) & 0xFFFFFFFF) == crc,
+         f"ZIP decompressed CRC mismatch: {name}")
+
+
 def verify_zip_layout(raw: bytes, infos: list) -> None:
     """Require every ZIP byte to belong to exactly one declared member or directory.
 
@@ -338,8 +368,10 @@ def verify_zip_layout(raw: bytes, infos: list) -> None:
         need(lname == len(name) and lextra == 0 and
              raw[local + 30:local + 30 + lname] == name,
              f"ZIP local filename or extra fields differ: {info.filename}")
-        end = local + 30 + lname + compressed
+        payload_start = local + 30 + lname
+        end = payload_start + compressed
         need(end <= cd_off, f"ZIP local member extends beyond data region: {info.filename}")
+        verify_zip_member_stream(raw[payload_start:end], method, expanded, crc, info.filename)
         local_ranges.append((local, end))
 
     cursor = 0
@@ -362,10 +394,11 @@ def audit(path: Path, *, source_root: Path | None = None) -> dict:
     tag = f"cp{pyver}-cp{pyver}-win_amd64"
     with ZipFile(path) as z:
         infos = z.infolist()
-        verify_zip_layout(path.read_bytes(), infos)
         need(0 < len(infos) <= 64 and sum(i.file_size for i in infos) <= 32 * 1024 * 1024,
              "wheel exceeds bounded audit budget")
         need(all(i.file_size <= 16 * 1024 * 1024 for i in infos), "oversized wheel member")
+        need(path.stat().st_size <= 32 * 1024 * 1024, "ZIP raw archive exceeds audit budget")
+        verify_zip_layout(path.read_bytes(), infos)
         need(all(stat.S_IFMT(i.external_attr >> 16) != stat.S_IFLNK for i in infos),
              "wheel contains symlink")
         files = z.namelist()
