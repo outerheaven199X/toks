@@ -124,7 +124,7 @@ FILES = _files()
 
 
 def _name(p):
-    return os.path.relpath(p, ROOT) if p.startswith(ROOT) else os.path.basename(p)
+    return os.path.relpath(p, ROOT).replace(os.sep, "/") if p.startswith(ROOT) else os.path.basename(p)
 
 
 def texts_for(j):
