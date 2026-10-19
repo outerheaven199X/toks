@@ -1,5 +1,6 @@
 #!/bin/sh
-# tools/release.sh: the toks release artifacts of this host (docs/release.md), from the repository root:
+# tools/release.sh: the toks release artifacts of this Linux or macOS host (docs/release.md), from the repository root:
+# Windows wheels are built natively by release-artifacts.yml, through tools\win\build.cmd lib.
 #
 #   build/release/toks-<version>-<os>-<isa>.tar.gz   include/{toks.h, toks.inc, toks_asm.h}, lib/libtoks.{a,so|dylib},
 #                                                    LICENSE, NOTICE, LICENSING.md, THIRD_PARTY_NOTICES.md,

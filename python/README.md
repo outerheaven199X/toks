@@ -116,7 +116,7 @@ An added token's content is found either way: `"<s>"` and `b"<s>"` both give lla
 
 An id beyond the table raises `toks.Error` (`TOKS_E_ID`).
 
-Build (from the repository root; needs clang, make and [uv](https://github.com/astral-sh/uv)):
+Build on Linux or macOS (from the repository root; needs clang, make and [uv](https://github.com/astral-sh/uv)):
 
 ```sh
 python3 tools/ci/fetch_tokenizers.py              # the pinned tokenizer files the tests read (else they SKIP)
@@ -126,5 +126,11 @@ uv run --no-project --python 3.12 --with build/wheels/toks-*-cp312-*.whl --with 
     pytest python/tests                            # one wheel: pick your python's tag
 ```
 
-`python/build.sh` builds and tests the wheels for every CPython on a machine. The wheels are attached to the GitHub
+On Windows x86-64, the same `uv build` command calls `tools\win\build.cmd lib` for the static library and MSVC for
+the extension. It needs LLVM 21.1.8 (`tools/ci/win_llvm.ps1`), Visual Studio C++ Build Tools with a Windows SDK, and uv.
+The Windows job in `release-artifacts.yml` first runs the C tests natively and on scalar, then builds CPython
+3.10-3.14 wheels. It runs the API and thread tests on each wheel and all Python tests on 3.13, with TOKS_LIB pointing
+to the built toks.dll. The wheels and logs are uploaded as run artifacts.
+
+`python/build.sh` builds and tests the wheels for every CPython on Linux and macOS. The wheels are attached to the GitHub
 releases, not on PyPI yet; the license is Apache-2.0 ([LICENSING.md](../LICENSING.md)).

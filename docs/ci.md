@@ -85,6 +85,19 @@ exits negative: -1073741819 is 0xC0000005); `-- FAIL <suite> killed after 240 s`
 aimax395 with a `git archive` of the branch (docs/machines.md), then `tools\win\build.cmd` and `tools\win\test.cmd`
 from the source root.
 
+## Release artifacts
+
+release-artifacts.yml runs by hand at a release commit. Its Linux jobs call tools/release.sh; its Windows wheel
+job uses `blacksmith-2vcpu-windows-2025`, LLVM 21.1.8 from tools/ci/win_llvm.ps1, and the image's MSVC and Windows SDK.
+It removes Git's Unix tools, MSYS, MinGW and Cygwin from PATH and fails if bash, sh or make still resolves. It runs
+`tools\win\build.cmd` without arguments, then `tools\win\test.cmd` natively and with `TOKS_TIER=scalar`.
+`uv build --wheel python` calls `tools\win\build.cmd lib` for CPython 3.10-3.14. Each wheel is installed by path in
+a fresh venv and runs test_api.py and test_threads.py against hf tokenizers 0.23.2. CPython 3.13 runs all of
+python/tests, matching python/build.sh's default parity interpreter, with the default sample sizes and the quick
+case sets generated as in nightly.yml. TOKS_LIB points to the built toks.dll for the C-binding comparison.
+The tokenizer fetch includes the Kimi directory and the tiktoken-file targets. The wheels and test logs are uploaded as
+`release-windows-x86_64` from build/wheels; the job does not publish a release or a Windows C bundle.
+
 ## The nightly
 
 nightly.yml runs what is too heavy for a push. It never runs on a pull request, and it uses test.yml's llvm and

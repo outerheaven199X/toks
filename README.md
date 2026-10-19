@@ -196,7 +196,7 @@ tar xzf toks-0.3.2-linux-x86_64.tar.gz
 cc -O2 app.c -Itoks-0.3.2-linux-x86_64/include toks-0.3.2-linux-x86_64/lib/libtoks.a -pthread
 ```
 
-**From source** (needs clang 21, LLVM's or Apple's, and make; the Python side uses
+**From source on Linux and macOS** (needs clang 21, LLVM's or Apple's, and make; the Python side uses
 [uv](https://github.com/astral-sh/uv)):
 
 ```sh
@@ -211,7 +211,11 @@ The fetch puts the files in `~/.cache/toks` (`TOKS_TOKENIZER_CACHE` moves it). W
 passes, and the tests that read a real tokenizer file print SKIP.
 
 On Windows x86-64, `tools/win/build.cmd` builds the same library (`libtoks.lib`, `toks.dll`) and
-`tools/win/test.cmd` tests it. There's no prebuilt Windows bundle yet.
+`tools/win/test.cmd` tests it. The Python wheel builds with `uv build --wheel python --out-dir build/wheels`:
+setup.py calls `tools\win\build.cmd lib`, then MSVC builds the extension. It needs LLVM 21.1.8
+(`tools/ci/win_llvm.ps1`), Visual Studio C++ Build Tools with a Windows SDK, and uv.
+`release-artifacts.yml` tests the C library natively and on scalar, then builds CPython 3.10-3.14 Windows wheels as
+run artifacts. It runs the API and thread tests on each wheel and all Python tests on 3.13. There's no prebuilt Windows C bundle yet.
 
 ## Using it from Python
 
@@ -292,7 +296,7 @@ reuses it across calls, which is where the piece caches and the segment memo pay
 | linux arm64 | NEON | release bundle | cp310-cp314, manylinux2014 | NVIDIA GB10 (Cortex-X925) |
 | linux x86-64 | AVX2 (AVX-512 machines run it) | release bundle | cp310-cp314, manylinux2014 | AMD Threadripper 9970X (Zen 5) |
 | macOS arm64 | NEON | release bundle | cp310-cp314 | Apple M2 Ultra |
-| windows x86-64 | AVX2 | build with `tools/win/build.cmd` | not yet | AMD Ryzen AI MAX+ 395 |
+| windows x86-64 | AVX2 | build with `tools/win/build.cmd` | cp310-cp314, win_amd64 (release-artifacts.yml) | AMD Ryzen AI MAX+ 395 |
 
 Every tier also has a portable C twin (`TOKS_TIER_SCALAR`) that gives identical output. The fastest tier your
 CPU supports is picked at load.

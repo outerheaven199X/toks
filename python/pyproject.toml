@@ -16,6 +16,7 @@ classifiers = [                             # no "License ::" classifier: setupt
     "Programming Language :: Python :: Implementation :: CPython",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
 ]
 
 [tool.setuptools]
