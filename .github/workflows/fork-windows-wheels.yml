@@ -1,0 +1,113 @@
+name: fork-windows-wheels
+
+on:
+  push:
+    branches: [windows-native-wheels-forkci]
+
+permissions:
+  contents: read
+
+jobs:
+  wheels-windows-x86_64:
+    runs-on: windows-2025
+    timeout-minutes: 45  # LLVM + cases + C tests + wheels ~28 min on GitHub-hosted windows-2025
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - name: checkout settings
+        run: |
+          git config --global core.autocrlf false
+          "HOME=$env:USERPROFILE" >> $env:GITHUB_ENV
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: llvm 21.1.8 (cache)
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: ~/.cache/toks-llvm/21.1.8
+          key: llvm-21.1.8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/ci/win_llvm.ps1') }}
+      - name: llvm 21.1.8
+        run: ./tools/ci/win_llvm.ps1
+      - name: uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - name: tokenizers and parity case sets
+        run: |
+          uv run --no-project --python 3.12 python tools/ci/fetch_tokenizers.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($n in 'gpt2', 'llama3', 'glm53', 'qwen38', 'gemma4', 'o200k') {
+            uv run --no-project --python 3.12 --with tokenizers==0.23.2 python tests/parity/gen_cases.py --tokenizer "$env:USERPROFILE/.cache/toks/tokenizers/$n" --out "$env:USERPROFILE/.cache/toks/cases/$n.jsonl" --quick
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: C tests and wheels (CPython 3.10-3.14, native Windows)
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -or -not $vs) { throw 'Visual Studio C++ tools not found' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          $vcenv = & $env:ComSpec /d /s /c ('"' + $vcvars + '" >nul && set')
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($line in $vcenv) {
+            if ($line -match '^(INCLUDE|LIB|LIBPATH|PATH)=(.*)$') {
+              [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+            }
+          }
+          $env:DISTUTILS_USE_SDK = '1'
+          $unixDirs = @(foreach ($tool in 'bash', 'sh', 'make') {
+            Get-Command $tool -All -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "Excluding PATH directory for ${tool}: $($_.Source)"
+              Split-Path $_.Source
+            }
+          })
+          $env:Path = (($env:Path -split ';') | Where-Object {
+            ($_ -replace '/', '\') -notmatch '(?i)(Git\\usr\\bin|Git\\bin|Git\\mingw64\\bin|msys|mingw|cygwin|WindowsApps\\bash)' -and
+            ($_ -replace '/', '\').TrimEnd('\') -notin $unixDirs
+          }) -join ';'
+          "PATH=$env:Path"
+          foreach ($tool in 'bash', 'sh', 'make') {
+            if (Get-Command $tool -ErrorAction SilentlyContinue) { throw "$tool is still on PATH" }
+            "Get-Command ${tool}: not found"
+          }
+          New-Item -ItemType Directory -Force build/wheels, build/ci | Out-Null
+          & $env:ComSpec /d /c tools\win\build.cmd 2>&1 | Tee-Object -FilePath build/ci/build.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($tier in 'native', 'scalar') {
+            if ($tier -eq 'native') { Remove-Item Env:TOKS_TIER -ErrorAction SilentlyContinue } else { $env:TOKS_TIER = $tier }
+            & $env:ComSpec /d /c tools\win\test.cmd 2>&1 | Tee-Object -FilePath "build/ci/$tier.log"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          Remove-Item Env:TOKS_TIER -ErrorAction SilentlyContinue
+          $env:TOKS_LIB = (Resolve-Path build/windows-x86_64/toks.dll).Path
+          foreach ($v in '3.10', '3.11', '3.12', '3.13', '3.14') {
+            $tag = 'cp' + $v.Replace('.', '')
+            uv build --wheel python --python $v --out-dir build/wheels
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $wheel = @(Get-ChildItem "build/wheels/toks-*-$tag-$tag-win_amd64.whl")
+            if ($wheel.Count -ne 1) { throw "expected one $tag Windows wheel" }
+            $venv = "build/wheel-test/$tag"
+            uv venv --python $v $venv
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $py = "$venv/Scripts/python.exe"
+            $deps = @('pytest', 'tokenizers==0.23.2')
+            $tests = @('python/tests/test_api.py', 'python/tests/test_threads.py')
+            if ($v -eq '3.13') {
+              $deps += 'tiktoken==0.14.0', 'transformers==5.18.0'
+              $tests = @('python/tests')
+            }
+            uv pip install --python $py $wheel[0].FullName @deps
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            & $py -m pytest -q -rs -p no:cacheprovider --junitxml="build/ci/python-$tag.xml" @tests 2>&1 | Tee-Object -FilePath "build/ci/python-$tag.log"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: release-windows-x86_64
+          path: |
+            build/wheels/toks-*.whl
+            build/ci/*.log
+            build/ci/python-*.xml
+          if-no-files-found: error
