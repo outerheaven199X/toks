@@ -101,8 +101,27 @@ jobs:
           }
       - name: C tests and wheels (CPython 3.10-3.14, native Windows)
         run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -or -not $vs) { throw 'Visual Studio C++ tools not found' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          $vcenv = & $env:ComSpec /d /s /c ('"' + $vcvars + '" >nul && set')
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($line in $vcenv) {
+            if ($line -match '^(INCLUDE|LIB|LIBPATH|PATH)=(.*)$') {
+              [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+            }
+          }
+          $env:DISTUTILS_USE_SDK = '1'
+          $unixDirs = @(foreach ($tool in 'bash', 'sh', 'make') {
+            Get-Command $tool -All -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "Excluding PATH directory for ${tool}: $($_.Source)"
+              Split-Path $_.Source
+            }
+          })
           $env:Path = (($env:Path -split ';') | Where-Object {
-            ($_ -replace '/', '\') -notmatch '(?i)(Git\\usr\\bin|Git\\bin|Git\\mingw64\\bin|msys|mingw|cygwin|WindowsApps\\bash)'
+            ($_ -replace '/', '\') -notmatch '(?i)(Git\\usr\\bin|Git\\bin|Git\\mingw64\\bin|msys|mingw|cygwin|WindowsApps\\bash)' -and
+            ($_ -replace '/', '\').TrimEnd('\') -notin $unixDirs
           }) -join ';'
           "PATH=$env:Path"
           foreach ($tool in 'bash', 'sh', 'make') {

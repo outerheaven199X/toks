@@ -89,7 +89,9 @@ from the source root.
 
 release-artifacts.yml runs by hand at a release commit. Its Linux jobs call tools/release.sh; its Windows wheel
 job uses `blacksmith-2vcpu-windows-2025`, LLVM 21.1.8 from tools/ci/win_llvm.ps1, and the image's MSVC and Windows SDK.
-It removes Git's Unix tools, MSYS, MinGW and Cygwin from PATH and fails if bash, sh or make still resolves. It runs
+It initializes the MSVC environment with vcvars64.bat, then removes Git's Unix tools, MSYS, MinGW, Cygwin and any
+remaining directories that provide bash, sh or make from the process PATH. It fails if any of those commands still
+resolves. It runs
 `tools\win\build.cmd` without arguments, then `tools\win\test.cmd` natively and with `TOKS_TIER=scalar`.
 `uv build --wheel python` calls `tools\win\build.cmd lib` for CPython 3.10-3.14. Each wheel is installed by path in
 a fresh venv and runs test_api.py and test_threads.py against hf tokenizers 0.23.2. CPython 3.13 runs all of
