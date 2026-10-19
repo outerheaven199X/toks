@@ -128,3 +128,32 @@ uv run --no-project --python 3.12 --with build/wheels/toks-*-cp312-*.whl --with 
 
 `python/build.sh` builds and tests the wheels for every CPython on a machine. The wheels are attached to the GitHub
 releases, not on PyPI yet; the license is Apache-2.0 ([LICENSING.md](../LICENSING.md)).
+
+### Windows x86-64
+
+Build from a full repository checkout with CPython, uv, Visual Studio 2022 Build Tools (the C++ workload and a
+Windows SDK), and LLVM 21.1.8. The core uses `tools\win\build.cmd lib`; MSVC compiles the CPython wrapper and links
+the static library into the `.pyd`. The wheel does not need a separate `toks.dll`. Windows ARM64 is not supported
+by this build path.
+
+Point `TOKS_LLVM_BIN` at the directory containing `clang.exe` and `llvm-lib.exe`, or use the native build's default
+`%USERPROFILE%\.cache\toks-llvm\21.1.8\bin`. In PowerShell, from the repository root:
+
+```powershell
+python tools/ci/fetch_tokenizers.py
+uv build --wheel python --python 3.12 --out-dir build/wheels
+uv venv --python 3.12 build/venv
+$wheel = Get-ChildItem build/wheels/toks-*-cp312-cp312-win_amd64.whl
+uv pip install --python build/venv/Scripts/python.exe $wheel.FullName pytest==9.1.1 tokenizers==0.23.2 tiktoken==0.14.0 transformers==5.18.0
+build/venv/Scripts/python.exe -m pytest -q -rs python/tests
+```
+
+Use a clean output directory so the wheel pattern selects exactly one artifact. The `windows-python-wheels`
+workflow builds CPython 3.10 through 3.14, tests the installed wheel on each, and runs the full Python parity
+profile on 3.12. Its Unix job checks the existing build path and native/scalar C gates. CI is correctness evidence;
+its shared runners are not used for speed claims.
+
+The [Windows CPU tokenizer benchmark](../docs/bench/windows-python.md) records a separate historical run,
+including its wheel/source hashes, receipts, within-pass text reuse and measurement limits. Its artifact is a
+fork build. Do not use `pip install toks==0.3.2` to reproduce it: that PyPI name/version belongs to an unrelated
+package.

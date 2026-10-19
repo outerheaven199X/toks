@@ -16,6 +16,7 @@ ids, with every push's text a prefix of it). Decode of an id beyond the table is
 import json
 import os
 import random
+import shutil
 
 import pytest
 
@@ -297,7 +298,11 @@ def test_target(target, file, kind, want, tmp_path):
                          (stem + "_tokenization_kimi.py", "tokenization_kimi.py")):
             if not os.path.isfile(src):
                 pytest.skip(f"{src} is missing (tools/corpora/fetch_tokenizers.py --targets)")
-            os.symlink(src, tmp_path / dst)
+            # The loader only reads these fixtures; Windows need not grant symlinks.
+            if os.name == "nt":
+                shutil.copyfile(src, tmp_path / dst)
+            else:
+                os.symlink(src, tmp_path / dst)
         path = str(tmp_path / "tiktoken.model")
         if kind == "compiles":
             toks.Tokenizer.from_file(path)

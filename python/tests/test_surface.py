@@ -28,6 +28,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import unicodedata
 
@@ -124,7 +125,8 @@ FILES = _files()
 
 
 def _name(p):
-    return os.path.relpath(p, ROOT) if p.startswith(ROOT) else os.path.basename(p)
+    name = os.path.relpath(p, ROOT) if p.startswith(ROOT) else os.path.basename(p)
+    return name.replace(os.sep, "/")  # expected-refusal keys use repository paths
 
 
 def texts_for(j):
@@ -412,7 +414,11 @@ def test_tiktoken_qwen1(tmp_path):
         p = os.path.join(TOKENIZERS, src)
         if not os.path.isfile(p):
             pytest.skip(f"{p} is missing (tools/corpora/fetch_tokenizers.py --targets)")
-        os.symlink(p, tmp_path / dst)
+        # These fixtures are read-only; a copy avoids Windows symlink privileges.
+        if os.name == "nt":
+            shutil.copyfile(p, tmp_path / dst)
+        else:
+            os.symlink(p, tmp_path / dst)
     sys.path.insert(0, os.path.join(ROOT, "tests", "parity"))
     import qwen1_check
     enc, _ = qwen1_check.reference(str(tmp_path))

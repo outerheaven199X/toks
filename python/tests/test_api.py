@@ -38,7 +38,7 @@ def test_version():
     import importlib.metadata
     import re
 
-    with open(os.path.join(os.path.dirname(__file__), "..", "..", "include", "toks.h")) as f:
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "include", "toks.h"), encoding="utf-8") as f:
         want = re.search(r'#define TOKS_VERSION +"(.*)"', f.read()).group(1)
     assert toks.__version__ == want == importlib.metadata.version("toks")      # library == header == wheel
 
@@ -554,7 +554,7 @@ def test_decode_bytes(gpt2):
 # ---- objects --------------------------------------------------------------------------------------------------
 
 def test_pickle(gpt2, gpt2_path):
-    for t in (gpt2, toks.Tokenizer.from_str(pathlib.Path(gpt2_path).read_text()),
+    for t in (gpt2, toks.Tokenizer.from_str(pathlib.Path(gpt2_path).read_text(encoding="utf-8")),
               toks.Tokenizer.from_buffer(pathlib.Path(gpt2_path).read_bytes())):
         t.encode_special_tokens = True
         u = pickle.loads(pickle.dumps(t))

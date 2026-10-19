@@ -1,0 +1,117 @@
+# Build wheels from this checkout and test installed artifacts, not an editable source import.
+# CI is correctness/build evidence only, never a performance measurement.
+name: windows-python-wheels
+on:
+  pull_request:
+    paths: ['python/**', 'src/**', 'include/**', 'tools/win/**', 'tools/ci/**', '.github/workflows/windows-python-wheels.yml']
+  push:
+    branches: [master, contribution/windows-python-wheels-and-bench]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wheel:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: '0.13.1'
+      - name: LLVM and pinned tokenizer files
+        run: |
+          ./tools/ci/win_llvm.ps1
+          python tools/ci/fetch_tokenizers.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build and install the wheel
+        run: |
+          uv python install '${{ matrix.python }}'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          uv build --wheel python --python '${{ matrix.python }}' --out-dir build/wheels
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $wheels = @(Get-ChildItem build/wheels/toks-*.whl)
+          if ($wheels.Count -ne 1 -or $wheels[0].Name -notmatch 'win_amd64') { throw 'Expected one native Windows wheel' }
+          uv venv --python '${{ matrix.python }}' build/venv
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          uv pip install --python build/venv/Scripts/python.exe $wheels[0].FullName pytest==9.1.1 tokenizers==0.23.2
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force build/evidence | Out-Null
+          Get-FileHash $wheels[0].FullName -Algorithm SHA256 | Format-List | Out-File build/evidence/wheel-sha256.txt
+      - name: Installed API and thread tests
+        run: |
+          build/venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider python/tests/test_api.py python/tests/test_threads.py --junitxml=build/evidence/api-threads.xml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Full Python parity profile on CPython 3.12
+        if: matrix.python == '3.12'
+        run: |
+          uv pip install --python build/venv/Scripts/python.exe tiktoken==0.14.0 transformers==5.18.0
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force build/cases | Out-Null
+          foreach ($name in @('gpt2','llama3','glm53','qwen38','gemma4','o200k')) {
+            build/venv/Scripts/python.exe tests/parity/gen_cases.py --tokenizer "$env:USERPROFILE/.cache/toks/tokenizers/$name" --out "build/cases/$name.jsonl" --quick
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          $env:TOKS_CASES = "$pwd/build/cases"
+          $env:TOKS_PY_N = '1500'
+          $env:TOKS_PY_CASES = '3000'
+          $env:TOKS_PY_REPORT = "$pwd/build/evidence/parity-counts.json"
+          build/venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider python/tests --junitxml=build/evidence/full-python.xml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Preserve build and test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-cpython-${{ matrix.python }}
+          path: |
+            build/wheels/*.whl
+            build/evidence/*
+          if-no-files-found: error
+          retention-days: 30
+  unix-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: '0.13.1'
+      - name: Pinned LLVM and tokenizer files
+        run: |
+          tools/ci/llvm.sh
+          echo "$HOME/.cache/toks-llvm/21.1.8/bin" >> "$GITHUB_PATH"
+          mkdir -p build/ci
+          python3 tools/ci/fetch_tokenizers.py | tee build/ci/fetch.log
+      - name: C correctness gates, native and scalar
+        run: tools/ci/test.sh
+      - name: Build and test the existing Unix wheel path
+        run: |
+          uv build --wheel python --python 3.12 --out-dir build/wheels
+          uv venv --python 3.12 build/venv
+          uv pip install --python build/venv/bin/python build/wheels/toks-*.whl pytest==9.1.1 tokenizers==0.23.2
+          build/venv/bin/python -m pytest -q -rs -p no:cacheprovider python/tests/test_api.py python/tests/test_threads.py --junitxml=build/ci/python.xml
+      - name: Preserve build and test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: linux-regression
+          path: |
+            build/ci/*
+            build/wheels/*.whl
+          if-no-files-found: error
+          retention-days: 30
