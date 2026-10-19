@@ -7,6 +7,7 @@ a missing file is a skip, never a pass.
 """
 import json
 import os
+import shutil
 import sys
 
 import pytest
@@ -19,6 +20,16 @@ TOKENIZERS = os.path.expanduser(os.environ.get("TOKS_TOKENIZER_CACHE", "~/.cache
 REPORT = os.environ.get("TOKS_PY_REPORT")       # a json file the parity tests add their counts to
 
 sys.path.append(os.path.join(ROOT, "python"))  # toks_oracle; appended, so `toks` stays the installed wheel
+
+
+def link_or_copy(src, dst):
+    """symlink src at dst; where Windows denies an unprivileged process a symlink (WinError 1314), copy it"""
+    try:
+        os.symlink(src, dst)
+    except OSError as e:
+        if getattr(e, "winerror", None) != 1314:
+            raise
+        shutil.copyfile(src, dst)
 
 
 def tok_path(name: str) -> str:

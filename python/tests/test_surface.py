@@ -34,7 +34,7 @@ import unicodedata
 import pytest
 
 import toks
-from conftest import ROOT, TOKENIZERS, report
+from conftest import ROOT, TOKENIZERS, link_or_copy, report
 
 tokenizers = pytest.importorskip("tokenizers")
 from toks_oracle import primitives as P  # noqa: E402
@@ -412,7 +412,7 @@ def test_tiktoken_qwen1(tmp_path):
         p = os.path.join(TOKENIZERS, src)
         if not os.path.isfile(p):
             pytest.skip(f"{p} is missing (tools/corpora/fetch_tokenizers.py --targets)")
-        os.symlink(p, tmp_path / dst)
+        link_or_copy(p, tmp_path / dst)
     sys.path.insert(0, os.path.join(ROOT, "tests", "parity"))
     import qwen1_check
     enc, _ = qwen1_check.reference(str(tmp_path))

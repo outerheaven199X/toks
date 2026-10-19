@@ -20,7 +20,7 @@ import random
 import pytest
 
 import toks
-from conftest import ROOT, report, tok_path
+from conftest import ROOT, link_or_copy, report, tok_path
 
 tokenizers = pytest.importorskip("tokenizers")
 from toks_oracle import gen as G  # noqa: E402
@@ -297,7 +297,7 @@ def test_target(target, file, kind, want, tmp_path):
                          (stem + "_tokenization_kimi.py", "tokenization_kimi.py")):
             if not os.path.isfile(src):
                 pytest.skip(f"{src} is missing (tools/corpora/fetch_tokenizers.py --targets)")
-            os.symlink(src, tmp_path / dst)
+            link_or_copy(src, tmp_path / dst)
         path = str(tmp_path / "tiktoken.model")
         if kind == "compiles":
             toks.Tokenizer.from_file(path)
